@@ -15,12 +15,15 @@
  */
 package com.android.axion.sandbox.ui
 
-import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.AlertDialog
@@ -42,9 +45,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import com.android.axion.compose.preferences.BasePreference
-import com.android.axion.compose.preferences.PreferenceGroup
-import com.android.axion.compose.scaffold.AxionScaffold
 import com.android.axion.sandbox.R
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalMaterial3ExpressiveApi::class)
@@ -59,74 +59,93 @@ fun ForgotPasswordScreen(
     var isError by remember { mutableStateOf(false) }
     var showConfirmDialog by remember { mutableStateOf(false) }
 
-    AxionScaffold(
+    // Recovery journey: SubmenuScaffold + LocalBasePreference (cung overscroll header).
+    SandboxSubmenuScaffold(
         title = stringResource(R.string.forgot_password_title),
-        onBackClick = onBack
-    ) { paddingValues ->
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(paddingValues)
-                .padding(horizontal = 16.dp)
+        onBackClick = onBack,
+    ) {
+        LazyColumn(
+            state = listState,
+            overscrollEffect = listOverscrollEffect,
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(
+                start = 16.dp,
+                end = 16.dp,
+                top = 0.dp,
+                bottom = 16.dp + WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding(),
+            ),
         ) {
-            Spacer(modifier = Modifier.height(8.dp))
+            item { Spacer(modifier = Modifier.height(8.dp)) }
 
-            Text(
-                text = stringResource(R.string.forgot_password_description),
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
+            item {
+                Text(
+                    text = stringResource(R.string.forgot_password_description),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
 
-            Spacer(modifier = Modifier.height(32.dp))
+            item { Spacer(modifier = Modifier.height(32.dp)) }
 
-            PreferenceGroup {
-                item {
-                    BasePreference(
-                        title = stringResource(R.string.recovery_question_label),
-                        summary = securityQuestion
+            item {
+                LocalPreferenceGroup {
+                    row { pos ->
+                        LocalBasePreference(
+                            title = stringResource(R.string.recovery_question_label),
+                            position = pos,
+                            summary = securityQuestion,
+                        )
+                    }
+                }
+            }
+
+            item { Spacer(modifier = Modifier.height(24.dp)) }
+
+            item {
+                OutlinedTextField(
+                    value = answer,
+                    onValueChange = {
+                        answer = it
+                        isError = false
+                    },
+                    label = { Text(stringResource(R.string.recovery_answer_label)) },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    isError = isError,
+                    supportingText = if (isError) {
+                        { Text(stringResource(R.string.forgot_password_error)) }
+                    } else {
+                        null
+                    },
+                    shape = MaterialTheme.shapes.large,
+                )
+            }
+
+            item { Spacer(modifier = Modifier.height(24.dp)) }
+
+            item {
+                Button(
+                    onClick = {
+                        if (onAnswerSubmit(answer)) {
+                            showConfirmDialog = true
+                        } else {
+                            isError = true
+                        }
+                    },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(56.dp),
+                    enabled = answer.isNotBlank(),
+                    shape = MaterialTheme.shapes.extraLarge,
+                ) {
+                    Text(
+                        text = stringResource(R.string.forgot_password_verify),
+                        style = MaterialTheme.typography.titleMedium,
                     )
                 }
             }
 
-            Spacer(modifier = Modifier.height(24.dp))
-
-            OutlinedTextField(
-                value = answer,
-                onValueChange = {
-                    answer = it
-                    isError = false
-                },
-                label = { Text(stringResource(R.string.recovery_answer_label)) },
-                modifier = Modifier.fillMaxWidth(),
-                singleLine = true,
-                isError = isError,
-                supportingText = if (isError) {
-                    { Text(stringResource(R.string.forgot_password_error)) }
-                } else null,
-                shape = MaterialTheme.shapes.large
-            )
-
-            Spacer(modifier = Modifier.height(24.dp))
-
-            Button(
-                onClick = {
-                    if (onAnswerSubmit(answer)) {
-                        showConfirmDialog = true
-                    } else {
-                        isError = true
-                    }
-                },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(56.dp),
-                enabled = answer.isNotBlank(),
-                shape = MaterialTheme.shapes.extraLarge
-            ) {
-                Text(
-                    text = stringResource(R.string.forgot_password_verify),
-                    style = MaterialTheme.typography.titleMedium
-                )
-            }
+            item { Spacer(modifier = Modifier.height(32.dp)) }
         }
     }
 
@@ -137,19 +156,19 @@ fun ForgotPasswordScreen(
                 Icon(
                     imageVector = Icons.Filled.Warning,
                     contentDescription = null,
-                    tint = MaterialTheme.colorScheme.error
+                    tint = MaterialTheme.colorScheme.error,
                 )
             },
             title = {
                 Text(
                     text = stringResource(R.string.forgot_password_reset_title),
-                    textAlign = TextAlign.Center
+                    textAlign = TextAlign.Center,
                 )
             },
             text = {
                 Text(
                     text = stringResource(R.string.forgot_password_reset_message),
-                    textAlign = TextAlign.Center
+                    textAlign = TextAlign.Center,
                 )
             },
             confirmButton = {
@@ -159,8 +178,8 @@ fun ForgotPasswordScreen(
                         onSuccess()
                     },
                     colors = ButtonDefaults.buttonColors(
-                        containerColor = MaterialTheme.colorScheme.error
-                    )
+                        containerColor = MaterialTheme.colorScheme.error,
+                    ),
                 ) {
                     Text(stringResource(R.string.action_reset))
                 }
@@ -169,7 +188,7 @@ fun ForgotPasswordScreen(
                 TextButton(onClick = { showConfirmDialog = false }) {
                     Text(stringResource(R.string.action_cancel))
                 }
-            }
+            },
         )
     }
 }

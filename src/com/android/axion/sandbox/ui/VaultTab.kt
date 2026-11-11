@@ -19,31 +19,62 @@ import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
 import android.net.Uri
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.lazy.grid.*
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.wrapContentSize
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.GridItemSpan
+import androidx.compose.foundation.lazy.grid.LazyGridState
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material.icons.outlined.FolderOpen
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
@@ -56,17 +87,33 @@ import androidx.lifecycle.LifecycleEventObserver
 import com.android.axion.sandbox.R
 import com.android.axion.sandbox.io.FileVaultManager
 import com.android.axion.sandbox.io.VaultFile
+import com.android.axion.sandbox.ui.motion.LocalSandboxPagerPageIndex
+import com.android.axion.sandbox.ui.motion.LocalSandboxPagerSettled
+import com.android.axion.sandbox.ui.motion.LocalSandboxPagerVisiblePage
+import com.android.axion.sandbox.ui.motion.miuixAlwaysVerticalStretch
 import kotlinx.coroutines.*
 
-@OptIn(ExperimentalMaterial3ExpressiveApi::class)
+@OptIn(ExperimentalMaterial3ExpressiveApi::class, ExperimentalLayoutApi::class)
 @Composable
 fun VaultTab(
     isUnlocked: Boolean = false,
     onUnlockRequest: () -> Unit = {},
-    onPickingFilesChange: (Boolean) -> Unit = {}
+    onPickingFilesChange: (Boolean) -> Unit = {},
+    contentPadding: PaddingValues = PaddingValues(0.dp),
+    listOverscrollEffect: androidx.compose.foundation.OverscrollEffect? = null,
+    nestInsideOuterScaffold: Boolean = false,
+    gridState: LazyGridState = rememberLazyGridState(),
+    useAlwaysStretch: Boolean = false,
 ) {
     if (!isUnlocked) {
-        LockedVaultScreen(onUnlockRequest)
+        val lockedMod = if (listOverscrollEffect != null) {
+            Modifier.fillMaxSize().miuixAlwaysVerticalStretch(listOverscrollEffect)
+        } else {
+            Modifier.fillMaxSize()
+        }
+        Box(modifier = lockedMod) {
+            LockedVaultScreen(onUnlockRequest)
+        }
         return
     }
 
@@ -105,6 +152,17 @@ fun VaultTab(
 
     var selectedFiles by remember { mutableStateOf(setOf<String>()) }
     val isMultiSelectMode by remember { derivedStateOf { selectedFiles.isNotEmpty() } }
+    var filter by rememberSaveable { mutableStateOf("all") } // all|images|videos|files
+
+    val rootInteractive = LocalSandboxRootInteractive.current
+    val pageIndex = LocalSandboxPagerPageIndex.current
+    val visiblePage = LocalSandboxPagerVisiblePage.current
+    val pagerSettled = LocalSandboxPagerSettled.current
+    val pageActive = pageIndex == null || pageIndex == visiblePage
+    // Chi bat Back selection khi Vault active + pager settled + root interactive.
+    BackHandler(enabled = rootInteractive && pageActive && pagerSettled && isMultiSelectMode) {
+        selectedFiles = emptySet()
+    }
 
     var showDeleteConfirm by remember { mutableStateOf(false) }
     var showRestoreConfirm by remember { mutableStateOf(false) }
@@ -124,7 +182,7 @@ fun VaultTab(
     ) { uris ->
         if (uris.isNotEmpty()) {
             isProcessing = true
-            processingMessage = "Importing..."
+            processingMessage = context.getString(R.string.vault_importing)
             scope.launch(Dispatchers.IO) {
                 try {
                     uris.forEach { vaultManager.importFile(it) }
@@ -140,7 +198,7 @@ fun VaultTab(
 
     fun executeRestore() {
         isProcessing = true
-        processingMessage = "Restoring..."
+        processingMessage = context.getString(R.string.vault_restoring)
         scope.launch(Dispatchers.IO) {
             try {
                 val toRestore = files.filter { selectedFiles.contains(it.id) }
@@ -153,9 +211,9 @@ fun VaultTab(
                         } else {
                             "Downloads/Vault_Restored/" + file.name
                         }
-                        restoredPopupMessage = "Restored to: $path"
+                        restoredPopupMessage = context.getString(R.string.vault_restored_to, path)
                     } else if (count > 1) {
-                        restoredPopupMessage = "$count files successfully restored!"
+                        restoredPopupMessage = context.getString(R.string.vault_restored_count, count)
                     }
                 }
             } finally {
@@ -170,7 +228,7 @@ fun VaultTab(
 
     fun executeDelete() {
         isProcessing = true
-        processingMessage = "Deleting..."
+        processingMessage = context.getString(R.string.vault_deleting)
         scope.launch(Dispatchers.IO) {
             try {
                 val toDelete = files.filter { selectedFiles.contains(it.id) }
@@ -193,94 +251,205 @@ fun VaultTab(
     val videos = remember(files) { files.filter { it.mimeType.startsWith("video/") } }
     val images = remember(files) { files.filter { it.mimeType.startsWith("image/") } }
     val otherFiles = remember(files) { files.filter { !it.mimeType.startsWith("image/") && !it.mimeType.startsWith("video/") } }
+    val showImages = filter == "all" || filter == "images"
+    val showVideos = filter == "all" || filter == "videos"
+    val showFiles = filter == "all" || filter == "files"
 
+    // nestInsideOuterScaffold: FAB/selection nam trong viewport page (khong duoi bottom nav).
+    val density = LocalDensity.current
+    // Do chieu cao slot bottom theo layout thuc (FAB/toolbar wrap) — tranh de len navbar.
+    var bottomSlotHeight by remember { mutableStateOf(72.dp) }
+    val showFab = !isMultiSelectMode && !isLoading
+    LaunchedEffect(showFab, isMultiSelectMode, isLoading) {
+        if (!showFab && !isMultiSelectMode) {
+            bottomSlotHeight = 72.dp
+        }
+    }
     Box(modifier = Modifier.fillMaxSize()) {
-        Scaffold(
-            floatingActionButton = {
-            if (!isMultiSelectMode) {
+        val gridBottomPad = bottomSlotHeight
+        if (isLoading) {
+            val loadMod = if (listOverscrollEffect != null || useAlwaysStretch) {
+                Modifier.fillMaxSize().then(
+                    if (listOverscrollEffect != null) {
+                        Modifier.miuixAlwaysVerticalStretch(listOverscrollEffect)
+                    } else Modifier,
+                )
+            } else Modifier.fillMaxSize()
+            Box(loadMod) { VaultLoadingScreen(PaddingValues(16.dp)) }
+        } else if (files.isEmpty()) {
+            val emptyMod = if (listOverscrollEffect != null) {
+                Modifier.fillMaxSize().miuixAlwaysVerticalStretch(listOverscrollEffect)
+            } else Modifier.fillMaxSize()
+            Box(emptyMod) { EmptyVaultScreen(PaddingValues(16.dp)) }
+        } else {
+            LazyVerticalGrid(
+                columns = GridCells.Adaptive(minSize = 104.dp),
+                state = gridState,
+                overscrollEffect = listOverscrollEffect,
+                modifier = Modifier.fillMaxSize(),
+                contentPadding = PaddingValues(
+                    start = 16.dp,
+                    end = 16.dp,
+                    top = 8.dp,
+                    bottom = gridBottomPad + contentPadding.calculateBottomPadding(),
+                ),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                item(span = { GridItemSpan(maxLineSpan) }, contentType = "filters") {
+                    // FlowRow: wrap khi hep / font lon — khong clip chip.
+                    FlowRow(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(bottom = 8.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        listOf(
+                            "all" to R.string.vault_filter_all,
+                            "images" to R.string.vault_filter_images,
+                            "videos" to R.string.vault_filter_videos,
+                            "files" to R.string.vault_filter_files,
+                        ).forEach { (id, labelRes) ->
+                            FilterChip(
+                                selected = filter == id,
+                                onClick = { filter = id },
+                                label = { Text(stringResource(labelRes)) },
+                            )
+                        }
+                    }
+                }
+                if (showImages && images.isNotEmpty()) {
+                    item(span = { GridItemSpan(maxLineSpan) }) {
+                        SectionHeader(stringResource(R.string.vault_section_images))
+                    }
+                    items(images, key = { it.id }) { file ->
+                        MediaGridItem(
+                            file, vaultManager, selectedFiles.contains(file.id), false,
+                            onClick = {
+                                if (isMultiSelectMode) toggleSelection(file.id) else handleOpenFile(file)
+                            },
+                            onLongClick = { toggleSelection(file.id) },
+                        )
+                    }
+                }
+                if (showVideos && videos.isNotEmpty()) {
+                    item(span = { GridItemSpan(maxLineSpan) }) {
+                        SectionHeader(stringResource(R.string.vault_section_videos))
+                    }
+                    items(videos, key = { it.id }) { file ->
+                        MediaGridItem(
+                            file, vaultManager, selectedFiles.contains(file.id), true,
+                            onClick = {
+                                if (isMultiSelectMode) toggleSelection(file.id) else handleOpenFile(file)
+                            },
+                            onLongClick = { toggleSelection(file.id) },
+                        )
+                    }
+                }
+                if (showFiles && otherFiles.isNotEmpty()) {
+                    item(span = { GridItemSpan(maxLineSpan) }) {
+                        SectionHeader(stringResource(R.string.vault_section_files))
+                    }
+                    items(otherFiles, key = { it.id }, span = { GridItemSpan(maxLineSpan) }) { file ->
+                        FileListItem(
+                            file, selectedFiles.contains(file.id),
+                            onClick = {
+                                if (isMultiSelectMode) toggleSelection(file.id) else handleOpenFile(file)
+                            },
+                            onLongClick = { toggleSelection(file.id) },
+                        )
+                    }
+                }
+            }
+        }
+
+        // Slot do chung FAB/toolbar — onSizeChanged theo entry/exit/wrap.
+        Box(
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .fillMaxWidth()
+                .animateContentSize()
+                .onSizeChanged { size ->
+                    val measured = with(density) { size.height.toDp() }
+                    bottomSlotHeight = if (measured > 0.dp) measured else 72.dp
+                },
+        ) {
+            AnimatedVisibility(
+                visible = showFab,
+                enter = fadeIn() + expandVertically(expandFrom = Alignment.Bottom),
+                exit = fadeOut() + shrinkVertically(shrinkTowards = Alignment.Bottom),
+                modifier = Modifier.align(Alignment.BottomEnd),
+            ) {
                 ExtendedFloatingActionButton(
-                    onClick = { 
+                    onClick = {
                         onPickingFilesChange(true)
-                        pickFilesLauncher.launch(arrayOf("*/*")) 
+                        pickFilesLauncher.launch(arrayOf("*/*"))
                     },
+                    modifier = Modifier.padding(16.dp),
                     icon = { Icon(Icons.Default.Add, null) },
-                    text = { Text("Import") },
+                    text = { Text(stringResource(R.string.action_import_vault)) },
                     containerColor = MaterialTheme.colorScheme.primaryContainer,
-                    shape = MaterialTheme.shapes.large
+                    shape = MaterialTheme.shapes.large,
                 )
             }
-        },
-        bottomBar = {
-            if (isMultiSelectMode) {
-                BottomAppBar(
-                    actions = {
-                        IconButton(onClick = { selectedFiles = emptySet() }) { Icon(Icons.Default.Close, null) }
-                        Text("${selectedFiles.size} selected")
-                    },
-                    floatingActionButton = {
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+
+            AnimatedVisibility(
+                visible = isMultiSelectMode,
+                enter = fadeIn() + expandVertically(expandFrom = Alignment.Bottom),
+                exit = fadeOut() + shrinkVertically(shrinkTowards = Alignment.Bottom),
+                modifier = Modifier.align(Alignment.BottomCenter),
+            ) {
+                Surface(
+                    tonalElevation = 3.dp,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    // Hai tang / scroll ngang: Close+count + action khong clip o font 1.5x+.
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 8.dp, vertical = 8.dp),
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            IconButton(onClick = { selectedFiles = emptySet() }) {
+                                Icon(
+                                    Icons.Default.Close,
+                                    contentDescription = stringResource(R.string.action_cancel),
+                                )
+                            }
+                            Text(
+                                stringResource(R.string.vault_selected_count, selectedFiles.size),
+                                modifier = Modifier.weight(1f),
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .horizontalScroll(rememberScrollState()),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
+                        ) {
                             FilledTonalButton(onClick = { showRestoreConfirm = true }) {
-                                Icon(Icons.Default.Restore, null)
-                                Spacer(modifier = Modifier.width(8.dp))
-                                Text("Restore")
+                                Text(stringResource(R.string.action_restore), maxLines = 1)
                             }
                             FilledTonalButton(
                                 onClick = { showDeleteConfirm = true },
                                 colors = ButtonDefaults.filledTonalButtonColors(
                                     containerColor = MaterialTheme.colorScheme.errorContainer,
-                                    contentColor = MaterialTheme.colorScheme.onErrorContainer
-                                )
+                                    contentColor = MaterialTheme.colorScheme.onErrorContainer,
+                                ),
                             ) {
-                                Icon(Icons.Default.Delete, null)
-                                Spacer(modifier = Modifier.width(8.dp))
-                                Text("Delete")
+                                Text(stringResource(R.string.action_delete), maxLines = 1)
                             }
                         }
                     }
-                )
-            }
-        },
-        containerColor = Color.Transparent
-    ) { paddingValues ->
-        if (isLoading) {
-            VaultLoadingScreen(paddingValues)
-        } else if (files.isEmpty()) {
-            EmptyVaultScreen(paddingValues)
-        } else {
-            LazyVerticalGrid(
-                columns = GridCells.Fixed(3),
-                modifier = Modifier.fillMaxSize().padding(paddingValues),
-                contentPadding = PaddingValues(16.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                if (images.isNotEmpty()) {
-                    item(span = { GridItemSpan(3) }) { SectionHeader("Images") }
-                    items(images, key = { it.id }) { file ->
-                        MediaGridItem(file, vaultManager, selectedFiles.contains(file.id), false,
-                            onClick = { if (isMultiSelectMode) toggleSelection(file.id) else handleOpenFile(file) },
-                            onLongClick = { toggleSelection(file.id) })
-                    }
                 }
-
-                if (videos.isNotEmpty()) {
-                    item(span = { GridItemSpan(3) }) { Spacer(modifier = Modifier.height(16.dp)); SectionHeader("Videos") }
-                    items(videos, key = { it.id }) { file ->
-                        MediaGridItem(file, vaultManager, selectedFiles.contains(file.id), true,
-                            onClick = { if (isMultiSelectMode) toggleSelection(file.id) else handleOpenFile(file) },
-                            onLongClick = { toggleSelection(file.id) })
-                    }
-                }
-
-                if (otherFiles.isNotEmpty()) {
-                    item(span = { GridItemSpan(3) }) { Spacer(modifier = Modifier.height(16.dp)); SectionHeader("Files") }
-                    items(otherFiles, key = { it.id }, span = { GridItemSpan(3) }) { file ->
-                        FileListItem(file, selectedFiles.contains(file.id),
-                            onClick = { if (isMultiSelectMode) toggleSelection(file.id) else handleOpenFile(file) },
-                            onLongClick = { toggleSelection(file.id) })
-                    }
-                }
-                item(span = { GridItemSpan(3) }) { Spacer(modifier = Modifier.height(80.dp)) }
             }
         }
     }
@@ -289,14 +458,23 @@ fun VaultTab(
         val isDelete = showDeleteConfirm
         AlertDialog(
             onDismissRequest = { showDeleteConfirm = false; showRestoreConfirm = false },
-            title = { Text(if (isDelete) "Delete" else "Restore") },
-            text = { Text(if (isDelete) "Permanently delete ${selectedFiles.size} files?" else "Restore ${selectedFiles.size} files?") },
+            shape = RoundedCornerShape(28.dp),
+            title = { Text(if (isDelete) stringResource(R.string.action_delete) else stringResource(R.string.action_restore)) },
+            text = {
+                Text(
+                    if (isDelete) stringResource(R.string.vault_delete_multi_confirm, selectedFiles.size)
+                    else stringResource(R.string.vault_restore_confirm, selectedFiles.size)
+                )
+            },
             confirmButton = {
                 TextButton(onClick = { if (isDelete) executeDelete() else executeRestore(); showDeleteConfirm = false; showRestoreConfirm = false }) {
-                    Text(if (isDelete) "Delete" else "Restore", color = if (isDelete) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary)
+                    Text(
+                        if (isDelete) stringResource(R.string.action_delete) else stringResource(R.string.action_restore),
+                        color = if (isDelete) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
+                    )
                 }
             },
-            dismissButton = { TextButton(onClick = { showDeleteConfirm = false; showRestoreConfirm = false }) { Text("Cancel") } }
+            dismissButton = { TextButton(onClick = { showDeleteConfirm = false; showRestoreConfirm = false }) { Text(stringResource(R.string.action_cancel)) } }
         )
     }
 
@@ -353,7 +531,6 @@ fun VaultTab(
                 )
             }
         }
-    }
     }
 }
 
@@ -443,7 +620,7 @@ private fun openVaultFileInternal(context: Context, file: VaultFile, uri: Uri) {
                 addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             }
         }
-        val chooser = Intent.createChooser(intent, "Open with")
+        val chooser = Intent.createChooser(intent, context.getString(R.string.vault_open_with))
         chooser.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         context.startActivity(chooser)
     } catch (e: Exception) {}

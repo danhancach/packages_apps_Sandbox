@@ -22,6 +22,7 @@ import android.os.CancellationSignal
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.PredictiveBackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
@@ -58,7 +59,12 @@ import com.android.axion.sandbox.ui.SandboxApp
 import com.android.axion.sandbox.ui.SecurityQuestionSetupScreen
 import com.android.axion.sandbox.ui.SecuritySetupScreen
 import com.android.axion.sandbox.ui.SettingsScreen
+import com.android.axion.sandbox.ui.motion.MiuixPageTransition
+import com.android.axion.sandbox.ui.motion.PredictiveBackScrub
+import com.android.axion.sandbox.ui.motion.SandboxSubRoute
 import com.android.axion.sandbox.ui.theme.SandboxTheme
+import java.util.concurrent.atomic.AtomicLong
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
@@ -253,91 +259,6 @@ fun SandboxNavigation(
     }
 
     when (currentScreen) {
-        SandboxScreen.UNLOCK_PRIVATE -> {
-            val securityType = securityManager.getSecurityType()
-
-            if (securityType == SecurityType.NONE || !securityManager.isSetup()) {
-                isPrivateUnlocked = true
-                isPrivateAreaExpanded = true
-                currentScreen = SandboxScreen.MAIN
-                return@SandboxNavigation
-            }
-
-            val onUnlockSuccess = {
-                if (securityManager.isSetup() && !securityManager.hasSecurityQuestion()) {
-                    currentScreen = SandboxScreen.SETUP_SECURITY_QUESTION
-                } else {
-                    isPrivateUnlocked = true
-                    isPrivateAreaExpanded = true
-                    securityManager.setLastUnlockTime()
-                    currentScreen = SandboxScreen.MAIN
-                }
-            }
-
-            BackHandler {
-                currentScreen = SandboxScreen.MAIN
-            }
-
-            LaunchedEffect(Unit) {
-                if (currentBiometricEnabled && securityManager.isBiometricAvailable() && currentPreferBiometric) {
-                    onShowBiometricPrompt(onUnlockSuccess)
-                }
-            }
-
-            when (securityType) {
-                SecurityType.PIN -> {
-                    LockScreen(
-                        isSetup = false,
-                        onUnlock = onUnlockSuccess,
-                        onPinEntered = { pin -> securityManager.verifyCredential(pin) },
-                        biometricType = if (currentBiometricEnabled && securityManager.isBiometricAvailable())
-                            securityManager.getBiometricType() else SandboxSecurityManager.BiometricType.NONE,
-                        onBiometricClick = { onShowBiometricPrompt(onUnlockSuccess) },
-                        onBack = { currentScreen = SandboxScreen.MAIN },
-                        onForgotPassword = if (securityManager.hasSecurityQuestion()) {
-                            { currentScreen = SandboxScreen.FORGOT_PASSWORD }
-                        } else null
-                    )
-                }
-                SecurityType.PASSWORD -> {
-                    PasswordScreen(
-                        isSetup = false,
-                        onUnlock = onUnlockSuccess,
-                        onPasswordEntered = { password -> securityManager.verifyCredential(password) },
-                        biometricType = if (currentBiometricEnabled && securityManager.isBiometricAvailable())
-                            securityManager.getBiometricType() else SandboxSecurityManager.BiometricType.NONE,
-                        onBiometricClick = { onShowBiometricPrompt(onUnlockSuccess) },
-                        onBack = { currentScreen = SandboxScreen.MAIN },
-                        onForgotPassword = if (securityManager.hasSecurityQuestion()) {
-                            { currentScreen = SandboxScreen.FORGOT_PASSWORD }
-                        } else null,
-                        requestInitialFocus = !currentPreferBiometric ||
-                            !currentBiometricEnabled ||
-                            !securityManager.isBiometricAvailable()
-                    )
-                }
-                SecurityType.PATTERN -> {
-                    PatternScreen(
-                        isSetup = false,
-                        onUnlock = onUnlockSuccess,
-                        onPatternEntered = { pattern -> securityManager.verifyPattern(pattern) },
-                        biometricType = if (currentBiometricEnabled && securityManager.isBiometricAvailable())
-                            securityManager.getBiometricType() else SandboxSecurityManager.BiometricType.NONE,
-                        onBiometricClick = { onShowBiometricPrompt(onUnlockSuccess) },
-                        onBack = { currentScreen = SandboxScreen.MAIN },
-                        onForgotPassword = if (securityManager.hasSecurityQuestion()) {
-                            { currentScreen = SandboxScreen.FORGOT_PASSWORD }
-                        } else null
-                    )
-                }
-                SecurityType.NONE -> {
-                    isPrivateUnlocked = true
-                    isPrivateAreaExpanded = true
-                    currentScreen = SandboxScreen.MAIN
-                }
-            }
-        }
-
         SandboxScreen.SETUP_TYPE_SELECTOR -> {
             SecuritySetupScreen(
                 onSecurityTypeSelected = { type ->
@@ -449,100 +370,285 @@ fun SandboxNavigation(
             }
         }
 
-        SandboxScreen.MAIN -> {
-            BackHandler(enabled = isSearchExpanded) {
-                isSearchExpanded = false
+        SandboxScreen.MAIN, SandboxScreen.SETTINGS, SandboxScreen.SETTINGS_RECOVERY, SandboxScreen.UNLOCK_PRIVATE -> {
+            val unlockOpen = currentScreen == SandboxScreen.UNLOCK_PRIVATE
+            val settingsOpen = currentScreen == SandboxScreen.SETTINGS ||
+                currentScreen == SandboxScreen.SETTINGS_RECOVERY
+            val recoveryOpen = currentScreen == SandboxScreen.SETTINGS_RECOVERY
+            // Outer: ROOT <-> SETTINGS hoac UNLOCK_PRIVATE. Recovery nested trong Settings (khong peer).
+            val outerRoute = when {
+                unlockOpen -> SandboxSubRoute.UNLOCK_PRIVATE
+                settingsOpen -> SandboxSubRoute.SETTINGS
+                else -> SandboxSubRoute.ROOT
+            }
+            var outerPredictive by remember { mutableStateOf<PredictiveBackScrub?>(null) }
+            var nestedPredictive by remember { mutableStateOf<PredictiveBackScrub?>(null) }
+            val outerSessionSeq = remember { AtomicLong(0L) }
+            val nestedSessionSeq = remember { AtomicLong(0L) }
+
+            // Nested Back truoc: RECOVERY -> SETTINGS (preview Settings, khong root).
+            PredictiveBackHandler(enabled = recoveryOpen) { progress ->
+                val sessionId = nestedSessionSeq.incrementAndGet()
+                try {
+                    progress.collect { event ->
+                        nestedPredictive = PredictiveBackScrub(sessionId, event.progress)
+                    }
+                    currentScreen = SandboxScreen.SETTINGS
+                } catch (_: CancellationException) {
+                } finally {
+                    if (nestedPredictive?.sessionId == sessionId) nestedPredictive = null
+                }
             }
 
-            SandboxApp(
-                onSettingsClick = { currentScreen = SandboxScreen.SETTINGS },
-                isSearchExpanded = isSearchExpanded,
-                onSearchExpandedChange = { expanded -> isSearchExpanded = expanded },
-                isPrivateUnlocked = isPrivateUnlocked,
-                onUnlockRequest = {
-                    currentScreen = SandboxScreen.UNLOCK_PRIVATE
-                },
-                isPrivateAreaExpanded = isPrivateAreaExpanded,
-                onPrivateAreaExpandChange = { expanded ->
-                    isPrivateAreaExpanded = expanded
-                },
-                isSecuritySetup = securityManager.isSetup(),
-                onSetupSecurity = {
-                    currentScreen = SandboxScreen.SETUP_TYPE_SELECTOR
-                },
-                selectedTabIndex = selectedTabIndex,
-                onTabIndexChange = { index -> selectedTabIndex = index },
-                isPickingFiles = isPickingFiles,
-                onPickingFilesChange = { picking -> isPickingFiles = picking }
-            )
-        }
-
-        SandboxScreen.SETTINGS -> {
-            BackHandler {
-                currentScreen = SandboxScreen.MAIN
+            // Outer Back chi khi SETTINGS (khong recovery).
+            PredictiveBackHandler(enabled = settingsOpen && !recoveryOpen) { progress ->
+                val sessionId = outerSessionSeq.incrementAndGet()
+                try {
+                    progress.collect { event ->
+                        outerPredictive = PredictiveBackScrub(sessionId, event.progress)
+                    }
+                    currentScreen = SandboxScreen.MAIN
+                } catch (_: CancellationException) {
+                } finally {
+                    if (outerPredictive?.sessionId == sessionId) outerPredictive = null
+                }
             }
 
-            SettingsScreen(
-                currentSecurityType = currentSecurityType,
-                currentLockedAppBehavior = currentLockedAppBehavior,
-                currentLockedAppTimeout = currentLockedAppTimeout,
-                currentPrivateBehavior = currentPrivateBehavior,
-                currentPrivateTimeout = currentPrivateTimeout,
-                isBiometricAvailable = securityManager.isBiometricAvailable(),
-                isBiometricEnabled = currentBiometricEnabled,
-                isPreferBiometric = currentPreferBiometric,
-                onBackClick = { currentScreen = SandboxScreen.MAIN },
-                onChangeSecurityType = { type ->
-                    if (securityManager.isSetup()) {
-                        pendingSecurityType = type
-                        currentScreen = SandboxScreen.VERIFY_CURRENT_CREDENTIAL
+            // Outer Back cho UNLOCK_PRIVATE -> MAIN.
+            PredictiveBackHandler(enabled = unlockOpen) { progress ->
+                val sessionId = outerSessionSeq.incrementAndGet()
+                try {
+                    progress.collect { event ->
+                        outerPredictive = PredictiveBackScrub(sessionId, event.progress)
+                    }
+                    currentScreen = SandboxScreen.MAIN
+                } catch (_: CancellationException) {
+                } finally {
+                    if (outerPredictive?.sessionId == sessionId) outerPredictive = null
+                }
+            }
+
+            LaunchedEffect(unlockOpen) {
+                if (unlockOpen) {
+                    val secType = securityManager.getSecurityType()
+                    if (secType == SecurityType.NONE || !securityManager.isSetup()) {
+                        isPrivateUnlocked = true
+                        isPrivateAreaExpanded = true
+                        currentScreen = SandboxScreen.MAIN
+                    } else if (currentBiometricEnabled && securityManager.isBiometricAvailable() && currentPreferBiometric) {
+                        onShowBiometricPrompt {
+                            if (securityManager.isSetup() && !securityManager.hasSecurityQuestion()) {
+                                currentScreen = SandboxScreen.SETUP_SECURITY_QUESTION
+                            } else {
+                                isPrivateUnlocked = true
+                                isPrivateAreaExpanded = true
+                                securityManager.setLastUnlockTime()
+                                currentScreen = SandboxScreen.MAIN
+                            }
+                        }
+                    }
+                }
+            }
+
+            MiuixPageTransition(
+                targetState = outerRoute,
+                predictiveBack = outerPredictive,
+                rootContent = {
+                    SandboxApp(
+                        onSettingsClick = { currentScreen = SandboxScreen.SETTINGS },
+                        isSearchExpanded = isSearchExpanded,
+                        onSearchExpandedChange = { expanded -> isSearchExpanded = expanded },
+                        isPrivateUnlocked = isPrivateUnlocked,
+                        onUnlockRequest = {
+                            val secType = securityManager.getSecurityType()
+                            if (secType == SecurityType.NONE || !securityManager.isSetup()) {
+                                isPrivateUnlocked = true
+                                isPrivateAreaExpanded = true
+                                securityManager.setLastUnlockTime()
+                            } else {
+                                forgotPasswordReturnScreen = SandboxScreen.UNLOCK_PRIVATE
+                                currentScreen = SandboxScreen.UNLOCK_PRIVATE
+                            }
+                        },
+                        isPrivateAreaExpanded = isPrivateAreaExpanded,
+                        onPrivateAreaExpandChange = { expanded ->
+                            isPrivateAreaExpanded = expanded
+                        },
+                        isSecuritySetup = securityManager.isSetup(),
+                        onSetupSecurity = {
+                            currentScreen = SandboxScreen.SETUP_TYPE_SELECTOR
+                        },
+                        selectedTabIndex = selectedTabIndex,
+                        onTabIndexChange = { index -> selectedTabIndex = index },
+                        isPickingFiles = isPickingFiles,
+                        onPickingFilesChange = { picking -> isPickingFiles = picking },
+                        searchBackEnabled = !settingsOpen && !unlockOpen,
+                        rootInteractive = !settingsOpen && !unlockOpen,
+                    )
+                },
+                childContent = { activeSubRoute ->
+                    if (activeSubRoute == SandboxSubRoute.UNLOCK_PRIVATE) {
+                        val secType = securityManager.getSecurityType()
+                        val onUnlockSuccess = {
+                            if (securityManager.isSetup() && !securityManager.hasSecurityQuestion()) {
+                                currentScreen = SandboxScreen.SETUP_SECURITY_QUESTION
+                            } else {
+                                isPrivateUnlocked = true
+                                isPrivateAreaExpanded = true
+                                securityManager.setLastUnlockTime()
+                                currentScreen = SandboxScreen.MAIN
+                            }
+                        }
+
+                        when (secType) {
+                            SecurityType.PIN -> {
+                                LockScreen(
+                                    isSetup = false,
+                                    onUnlock = onUnlockSuccess,
+                                    onPinEntered = { pin -> securityManager.verifyCredential(pin) },
+                                    biometricType = if (currentBiometricEnabled && securityManager.isBiometricAvailable())
+                                        securityManager.getBiometricType() else SandboxSecurityManager.BiometricType.NONE,
+                                    onBiometricClick = { onShowBiometricPrompt(onUnlockSuccess) },
+                                    onBack = { currentScreen = SandboxScreen.MAIN },
+                                    onForgotPassword = if (securityManager.hasSecurityQuestion()) {
+                                        {
+                                            forgotPasswordReturnScreen = SandboxScreen.UNLOCK_PRIVATE
+                                            currentScreen = SandboxScreen.FORGOT_PASSWORD
+                                        }
+                                    } else null
+                                )
+                            }
+                            SecurityType.PASSWORD -> {
+                                PasswordScreen(
+                                    isSetup = false,
+                                    onUnlock = onUnlockSuccess,
+                                    onPasswordEntered = { password -> securityManager.verifyCredential(password) },
+                                    biometricType = if (currentBiometricEnabled && securityManager.isBiometricAvailable())
+                                        securityManager.getBiometricType() else SandboxSecurityManager.BiometricType.NONE,
+                                    onBiometricClick = { onShowBiometricPrompt(onUnlockSuccess) },
+                                    onBack = { currentScreen = SandboxScreen.MAIN },
+                                    onForgotPassword = if (securityManager.hasSecurityQuestion()) {
+                                        {
+                                            forgotPasswordReturnScreen = SandboxScreen.UNLOCK_PRIVATE
+                                            currentScreen = SandboxScreen.FORGOT_PASSWORD
+                                        }
+                                    } else null,
+                                    requestInitialFocus = !currentPreferBiometric ||
+                                        !currentBiometricEnabled ||
+                                        !securityManager.isBiometricAvailable()
+                                )
+                            }
+                            SecurityType.PATTERN -> {
+                                PatternScreen(
+                                    isSetup = false,
+                                    onUnlock = onUnlockSuccess,
+                                    onPatternEntered = { pattern -> securityManager.verifyPattern(pattern) },
+                                    biometricType = if (currentBiometricEnabled && securityManager.isBiometricAvailable())
+                                        securityManager.getBiometricType() else SandboxSecurityManager.BiometricType.NONE,
+                                    onBiometricClick = { onShowBiometricPrompt(onUnlockSuccess) },
+                                    onBack = { currentScreen = SandboxScreen.MAIN },
+                                    onForgotPassword = if (securityManager.hasSecurityQuestion()) {
+                                        {
+                                            forgotPasswordReturnScreen = SandboxScreen.UNLOCK_PRIVATE
+                                            currentScreen = SandboxScreen.FORGOT_PASSWORD
+                                        }
+                                    } else null
+                                )
+                            }
+                            SecurityType.NONE -> {
+                                isPrivateUnlocked = true
+                                isPrivateAreaExpanded = true
+                                currentScreen = SandboxScreen.MAIN
+                            }
+                        }
                     } else {
-                        selectedSecurityType = type
-                        firstCredential = null
-                        isConfirmStep = false
-                        currentScreen = SandboxScreen.CHANGE_SECURITY
+                        // Nested SETTINGS -> RECOVERY: Back preview giu Settings lam previous.
+                        MiuixPageTransition(
+                            targetState = if (recoveryOpen) {
+                                SandboxSubRoute.SETTINGS_RECOVERY
+                            } else {
+                                SandboxSubRoute.ROOT
+                            },
+                            predictiveBack = nestedPredictive,
+                            rootContent = {
+                                SettingsScreen(
+                                    currentSecurityType = currentSecurityType,
+                                    currentLockedAppBehavior = currentLockedAppBehavior,
+                                    currentLockedAppTimeout = currentLockedAppTimeout,
+                                    currentPrivateBehavior = currentPrivateBehavior,
+                                    currentPrivateTimeout = currentPrivateTimeout,
+                                    isBiometricAvailable = securityManager.isBiometricAvailable(),
+                                    isBiometricEnabled = currentBiometricEnabled,
+                                    isPreferBiometric = currentPreferBiometric,
+                                    onBackClick = { currentScreen = SandboxScreen.MAIN },
+                                    onChangeSecurityType = { type ->
+                                        if (securityManager.isSetup()) {
+                                            pendingSecurityType = type
+                                            currentScreen = SandboxScreen.VERIFY_CURRENT_CREDENTIAL
+                                        } else {
+                                            selectedSecurityType = type
+                                            firstCredential = null
+                                            isConfirmStep = false
+                                            currentScreen = SandboxScreen.CHANGE_SECURITY
+                                        }
+                                    },
+                                    onChangeLockedAppBehavior = { behavior ->
+                                        securityManager.setLockedAppBehavior(behavior)
+                                        currentLockedAppBehavior = behavior
+                                    },
+                                    onChangeLockedAppTimeout = { timeout ->
+                                        securityManager.setLockedAppTimeout(timeout)
+                                        currentLockedAppTimeout = timeout
+                                    },
+                                    onChangePrivateBehavior = { behavior ->
+                                        securityManager.setPrivateSectionBehavior(behavior)
+                                        currentPrivateBehavior = behavior
+                                        if (behavior == PrivateSectionBehavior.TIMEOUT) {
+                                            securityManager.setLastUnlockTime()
+                                        }
+                                    },
+                                    onChangePrivateTimeout = { timeout ->
+                                        securityManager.setPrivateSectionTimeout(timeout)
+                                        currentPrivateTimeout = timeout
+                                    },
+                                    onChangeBiometricEnabled = { enabled ->
+                                        securityManager.setBiometricEnabled(enabled)
+                                        currentBiometricEnabled = enabled
+                                        if (!enabled) {
+                                            currentPreferBiometric = false
+                                        }
+                                    },
+                                    onChangePreferBiometric = { preferred ->
+                                        securityManager.setPreferBiometric(preferred)
+                                        currentPreferBiometric = preferred
+                                    },
+                                    hasSecurityQuestion = hasSecurityQuestion,
+                                    onSetupRecovery = {
+                                        currentScreen = SandboxScreen.SETTINGS_RECOVERY
+                                    },
+                                    onForgotPassword = {
+                                        forgotPasswordReturnScreen = SandboxScreen.SETTINGS
+                                        currentScreen = SandboxScreen.FORGOT_PASSWORD
+                                    },
+                                    onBackupAppList = onBackupAppList,
+                                    onRestoreAppList = onRestoreAppList,
+                                )
+                            },
+                            childContent = {
+                                SecurityQuestionSetupScreen(
+                                    onComplete = { question, answer ->
+                                        securityManager.setSecurityQuestion(question, answer)
+                                        hasSecurityQuestion = true
+                                        currentScreen = SandboxScreen.SETTINGS
+                                    },
+                                    onBack = {
+                                        currentScreen = SandboxScreen.SETTINGS
+                                    },
+                                )
+                            },
+                        )
                     }
                 },
-                onChangeLockedAppBehavior = { behavior ->
-                    securityManager.setLockedAppBehavior(behavior)
-                    currentLockedAppBehavior = behavior
-                },
-                onChangeLockedAppTimeout = { timeout ->
-                    securityManager.setLockedAppTimeout(timeout)
-                    currentLockedAppTimeout = timeout
-                },
-                onChangePrivateBehavior = { behavior ->
-                    securityManager.setPrivateSectionBehavior(behavior)
-                    currentPrivateBehavior = behavior
-                    if (behavior == PrivateSectionBehavior.TIMEOUT) {
-                        securityManager.setLastUnlockTime()
-                    }
-                },
-                onChangePrivateTimeout = { timeout ->
-                    securityManager.setPrivateSectionTimeout(timeout)
-                    currentPrivateTimeout = timeout
-                },
-                onChangeBiometricEnabled = { enabled ->
-                    securityManager.setBiometricEnabled(enabled)
-                    currentBiometricEnabled = enabled
-                    if (!enabled) {
-                        currentPreferBiometric = false
-                    }
-                },
-                onChangePreferBiometric = { preferred ->
-                    securityManager.setPreferBiometric(preferred)
-                    currentPreferBiometric = preferred
-                },
-                hasSecurityQuestion = hasSecurityQuestion,
-                onSetupRecovery = {
-                    currentScreen = SandboxScreen.SETTINGS_RECOVERY
-                },
-                onForgotPassword = {
-                    forgotPasswordReturnScreen = SandboxScreen.SETTINGS
-                    currentScreen = SandboxScreen.FORGOT_PASSWORD
-                },
-                onBackupAppList = onBackupAppList,
-                onRestoreAppList = onRestoreAppList
             )
         }
 
@@ -729,23 +835,6 @@ fun SandboxNavigation(
                     isPrivateAreaExpanded = true
                     securityManager.setLastUnlockTime()
                     currentScreen = SandboxScreen.MAIN
-                }
-            )
-        }
-
-        SandboxScreen.SETTINGS_RECOVERY -> {
-            BackHandler {
-                currentScreen = SandboxScreen.SETTINGS
-            }
-
-            SecurityQuestionSetupScreen(
-                onComplete = { question, answer ->
-                    securityManager.setSecurityQuestion(question, answer)
-                    hasSecurityQuestion = true
-                    currentScreen = SandboxScreen.SETTINGS
-                },
-                onBack = {
-                    currentScreen = SandboxScreen.SETTINGS
                 }
             )
         }

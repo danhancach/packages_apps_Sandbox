@@ -15,14 +15,15 @@
  */
 package com.android.axion.sandbox.ui
 
-import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
@@ -38,9 +39,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
-import com.android.axion.compose.preferences.ListPreference
-import com.android.axion.compose.preferences.PreferenceGroup
-import com.android.axion.compose.scaffold.AxionScaffold
 import com.android.axion.sandbox.R
 import com.android.axion.sandbox.security.SandboxSecurityManager
 
@@ -56,88 +54,104 @@ fun SecurityQuestionSetupScreen(
     val questionOptions = remember {
         SandboxSecurityManager.SECURITY_QUESTIONS.map { it to it }
     }
+    val questionPlaceholder = stringResource(R.string.recovery_question_placeholder)
 
-    AxionScaffold(
+    // Dung SubmenuScaffold + LocalListPreference (setup ban dau va SETTINGS→RECOVERY).
+    SandboxSubmenuScaffold(
         title = stringResource(R.string.recovery_title),
-        onBackClick = onBack
-    ) { paddingValues ->
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(paddingValues)
-                .verticalScroll(rememberScrollState())
-                .padding(horizontal = 16.dp)
+        onBackClick = onBack,
+    ) {
+        LazyColumn(
+            state = listState,
+            overscrollEffect = listOverscrollEffect,
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(
+                start = 16.dp,
+                end = 16.dp,
+                top = 0.dp,
+                bottom = 16.dp + WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding(),
+            ),
         ) {
-            Spacer(modifier = Modifier.height(8.dp))
+            item { Spacer(modifier = Modifier.height(8.dp)) }
 
-            Text(
-                text = stringResource(R.string.recovery_description),
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-
-            Spacer(modifier = Modifier.height(32.dp))
-
-            PreferenceGroup {
-                item {
-                    ListPreference(
-                        title = stringResource(R.string.recovery_question_label),
-                        summary = stringResource(R.string.recovery_question_placeholder),
-                        options = questionOptions,
-                        value = selectedQuestion.orEmpty(),
-                        onValueChange = { selectedQuestion = it }
-                    )
-                }
-            }
-
-            Spacer(modifier = Modifier.height(24.dp))
-
-            OutlinedTextField(
-                value = answer,
-                onValueChange = { answer = it },
-                label = { Text(stringResource(R.string.recovery_answer_label)) },
-                modifier = Modifier.fillMaxWidth(),
-                singleLine = true,
-                enabled = selectedQuestion != null,
-                shape = MaterialTheme.shapes.large
-            )
-
-            Spacer(modifier = Modifier.height(32.dp))
-
-            Button(
-                onClick = {
-                    selectedQuestion?.let { q ->
-                        onComplete(q, answer)
-                    }
-                },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(56.dp),
-                enabled = selectedQuestion != null && answer.isNotBlank(),
-                shape = MaterialTheme.shapes.extraLarge
-            ) {
+            item {
                 Text(
-                    text = stringResource(R.string.action_continue),
-                    style = MaterialTheme.typography.titleMedium
+                    text = stringResource(R.string.recovery_description),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
 
-            if (onSkip != null) {
-                Spacer(modifier = Modifier.height(16.dp))
+            item { Spacer(modifier = Modifier.height(32.dp)) }
 
-                TextButton(
-                    onClick = onSkip,
-                    modifier = Modifier.fillMaxWidth()
+            item {
+                LocalPreferenceGroup {
+                    row { pos ->
+                        LocalListPreference(
+                            title = stringResource(R.string.recovery_question_label),
+                            position = pos,
+                            options = questionOptions,
+                            value = selectedQuestion.orEmpty(),
+                            onValueChange = { selectedQuestion = it },
+                            summary = questionPlaceholder,
+                        )
+                    }
+                }
+            }
+
+            item { Spacer(modifier = Modifier.height(24.dp)) }
+
+            item {
+                OutlinedTextField(
+                    value = answer,
+                    onValueChange = { answer = it },
+                    label = { Text(stringResource(R.string.recovery_answer_label)) },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    enabled = selectedQuestion != null,
+                    shape = MaterialTheme.shapes.large,
+                )
+            }
+
+            item { Spacer(modifier = Modifier.height(32.dp)) }
+
+            item {
+                Button(
+                    onClick = {
+                        selectedQuestion?.let { q ->
+                            onComplete(q, answer)
+                        }
+                    },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(56.dp),
+                    enabled = selectedQuestion != null && answer.isNotBlank(),
+                    shape = MaterialTheme.shapes.extraLarge,
                 ) {
                     Text(
-                        text = stringResource(R.string.action_skip),
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                        text = stringResource(R.string.action_continue),
+                        style = MaterialTheme.typography.titleMedium,
                     )
                 }
             }
 
-            Spacer(modifier = Modifier.height(32.dp))
+            if (onSkip != null) {
+                item { Spacer(modifier = Modifier.height(16.dp)) }
+                item {
+                    TextButton(
+                        onClick = onSkip,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Text(
+                            text = stringResource(R.string.action_skip),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+            }
+
+            item { Spacer(modifier = Modifier.height(32.dp)) }
         }
     }
 }

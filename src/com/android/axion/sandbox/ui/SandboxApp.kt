@@ -52,19 +52,28 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.asPaddingValues
+import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.wrapContentSize
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.GridItemSpan
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items as lazyGridItems
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.pager.HorizontalPager
-import androidx.compose.foundation.pager.rememberPagerState
-import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.ripple
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Apps
 import androidx.compose.material.icons.filled.Check
@@ -77,6 +86,7 @@ import androidx.compose.material.icons.filled.OpenInNew
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material.icons.outlined.Apps
 import androidx.compose.material.icons.outlined.FolderOpen
@@ -93,6 +103,7 @@ import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.LoadingIndicator
 import androidx.compose.material3.MaterialTheme
@@ -139,7 +150,10 @@ import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.LayoutDirection
@@ -151,16 +165,14 @@ import androidx.lifecycle.LifecycleEventObserver
 import com.android.axion.compose.applist.AppEntry
 import com.android.axion.compose.applist.AppFilter
 import com.android.axion.compose.applist.rememberAppList
-import com.android.axion.compose.preferences.BasePreference
-import com.android.axion.compose.preferences.ClickablePreference
-import com.android.axion.compose.preferences.PreferenceGroup
 import com.android.axion.compose.preferences.SettingsType
-import com.android.axion.compose.preferences.SwitchPreference
 import com.android.axion.compose.preferences.rememberSettingsFlow
 import com.android.axion.compose.scaffold.AxionLargeTopAppBar
 import com.android.axion.compose.scaffold.AxionScaffold
 import com.android.axion.compose.sheet.BottomSheetDialog
 import com.android.axion.sandbox.R
+import com.android.axion.sandbox.ui.motion.miuixAlwaysVerticalStretch
+import com.android.axion.sandbox.ui.motion.MiuixTitleMotion
 import com.android.internal.app.HiddenNotificationInfo
 import com.android.internal.app.IHiddenNotificationListener
 import java.text.SimpleDateFormat
@@ -236,7 +248,10 @@ fun SandboxApp(
     selectedTabIndex: Int = 0,
     onTabIndexChange: (Int) -> Unit = {},
     isPickingFiles: Boolean = false,
-    onPickingFilesChange: (Boolean) -> Unit = {}
+    onPickingFilesChange: (Boolean) -> Unit = {},
+    searchBackEnabled: Boolean = true,
+    /** Parent shell interactive (MAIN settled, khong settings). */
+    rootInteractive: Boolean = true,
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -250,9 +265,15 @@ fun SandboxApp(
     val density = LocalDensity.current
     val iconTargetPx = remember(density) { with(density) { 52.dp.roundToPx() } }
 
-    val apps by produceState<List<AppInfo>>(initialValue = emptyList(), appsState.value, refreshKey) {
+    val apps by produceState<List<AppInfo>>(
+        initialValue = SandboxAppListCache.cachedApps ?: emptyList(),
+        appsState.value,
+        refreshKey
+    ) {
         if (appsState.value.isEmpty()) {
-            value = emptyList()
+            if (SandboxAppListCache.cachedApps == null) {
+                value = emptyList()
+            }
             return@produceState
         }
         withContext(Dispatchers.Default) {
@@ -300,29 +321,30 @@ fun SandboxApp(
 
             val (regularEntries, systemEntries) = appsState.value.partition { !it.isSystem }
             val regularApps = processEntries(regularEntries)
-            value = regularApps
-
             val systemApps = processEntries(systemEntries)
-            value = (regularApps + systemApps).sortedBy { it.label.lowercase() }
+            val sorted = (regularApps + systemApps).sortedBy { it.label.lowercase() }
+            SandboxAppListCache.cachedApps = sorted
+            value = sorted
         }
     }
     val isLoading = apps.isEmpty()
+    // Saveable root state song song detail/settings (khong reset khi overlay).
     var searchQuery by rememberSaveable { mutableStateOf("") }
     var selectedApp by remember { mutableStateOf<AppInfo?>(null) }
-
-    val pagerState = rememberPagerState(
-        initialPage = selectedTabIndex,
-        pageCount = { 3 }
-    )
-
-    LaunchedEffect(pagerState.currentPage) {
-        onTabIndexChange(pagerState.currentPage)
-    }
+    // Snapshot UI detail giu den khi transition settled; relock clear ngay.
+    var detailSnapshot by remember { mutableStateOf<AppInfo?>(null) }
 
     val reloadApps: () -> Unit = {
         refreshKey++
-        selectedApp?.let { selected ->
-            selectedApp = apps.find { it.packageName == selected.packageName && it.userId == selected.userId }
+        val live = selectedApp ?: detailSnapshot
+        live?.let { selected ->
+            val updated = apps.find {
+                it.packageName == selected.packageName && it.userId == selected.userId
+            }
+            if (updated != null) {
+                if (selectedApp != null) selectedApp = updated
+                detailSnapshot = updated
+            }
         }
     }
 
@@ -393,346 +415,141 @@ fun SandboxApp(
         }
     }
 
-    if (selectedApp != null) {
-        AppDetailScreen(
-            app = selectedApp!!,
-            onBackClick = { selectedApp = null },
-            onLockToggle = { app ->
-                scope.launch {
-                    toggleAppLock(context, app.packageName, app.userId, !app.isLocked)
-                    reloadApps()
-                }
-            },
-            onHideToggle = { app ->
-                scope.launch {
-                    val nextHideState = !app.isHidden
-                    toggleAppHidden(context, app.packageName, app.userId, nextHideState)
-                    if (nextHideState) {
-                        toggleAppLauncherHidden(context, app.packageName, app.userId, false)
-                        selectedApp = app.copy(isHidden = true, isLauncherHidden = false)
-                    } else {
-                        selectedApp = app.copy(isHidden = false)
-                    }
-                    reloadApps()
-                }
-            },
-            onLauncherHideToggle = { app ->
-                scope.launch {
-                    val nextLauncherHideState = !app.isLauncherHidden
-                    toggleAppLauncherHidden(context, app.packageName, app.userId, nextLauncherHideState)
-                    if (nextLauncherHideState) {
-                        toggleAppHidden(context, app.packageName, app.userId, false)
-                        selectedApp = app.copy(isLauncherHidden = true, isHidden = false)
-                    } else {
-                        selectedApp = app.copy(isLauncherHidden = false)
-                    }
-                    reloadApps()
-                }
-            },
-            onSandboxToggle = { app ->
-                scope.launch {
-                    toggleAppSandboxed(context, app.packageName, app.userId, !app.isSandboxed)
-                    reloadApps()
-                }
-            },
-            onLaunch = { app ->
-                launchApp(context, app.packageName, app.userId)
-            },
-            isSecuritySetup = isSecuritySetup
-        )
-    } else {
-        val scrollBehavior = TopAppBarDefaults.exitUntilCollapsedScrollBehavior(rememberTopAppBarState())
+    // Relock: clear ngay — khong giu UI/semantics nhay cam qua transition.
+    LaunchedEffect(isPrivateUnlocked, selectedApp, detailSnapshot) {
+        val app = selectedApp ?: detailSnapshot ?: return@LaunchedEffect
+        if (!isPrivateUnlocked && (app.isLocked || app.isHidden)) {
+            selectedApp = null
+            detailSnapshot = null
+        }
+    }
 
-        Scaffold(
-            modifier = Modifier.nestedScroll(scrollBehavior.nestedScrollConnection),
-            containerColor = MaterialTheme.colorScheme.surfaceContainer,
-            topBar = {
-                AxionLargeTopAppBar(
-                    title = stringResource(R.string.sandbox_title),
-                    scrollBehavior = scrollBehavior,
-                    containerColor = MaterialTheme.colorScheme.surfaceContainer,
-                    titleContent =
-                        if (isSearchExpanded) {
-                            {
-                                OutlinedTextField(
-                                    value = searchQuery,
-                                    onValueChange = { searchQuery = it },
-                                    modifier = Modifier.fillMaxWidth(),
-                                    placeholder = { Text(stringResource(R.string.search_hint)) },
-                                    leadingIcon = {
-                                        Icon(
-                                            imageVector = Icons.Default.Search,
-                                            contentDescription = null,
-                                            tint = MaterialTheme.colorScheme.onSurfaceVariant
-                                        )
-                                    },
-                                    singleLine = true,
-                                    shape = MaterialTheme.shapes.extraLarge,
-                                    colors = OutlinedTextFieldDefaults.colors(
-                                        unfocusedContainerColor = MaterialTheme.colorScheme.surfaceBright,
-                                        focusedContainerColor = MaterialTheme.colorScheme.surfaceBright,
-                                        unfocusedBorderColor = Color.Transparent,
-                                        focusedBorderColor = MaterialTheme.colorScheme.primary
-                                    )
-                                )
-                            }
-                        } else null,
-                    actions = {
-                        FilledIconToggleButton(
-                            checked = isSearchExpanded,
-                            onCheckedChange = {
-                                onSearchExpandedChange(it)
-                                if (!it) searchQuery = ""
-                            },
-                            shape = CircleShape,
-                            colors = IconButtonDefaults.filledIconToggleButtonColors(
-                                containerColor = MaterialTheme.colorScheme.surfaceBright,
-                                checkedContainerColor = MaterialTheme.colorScheme.primaryContainer
-                            )
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Search,
-                                contentDescription = stringResource(R.string.action_search)
-                            )
-                        }
+    LaunchedEffect(selectedApp) {
+        if (selectedApp != null) detailSnapshot = selectedApp
+    }
 
-                        Box {
-                            FilledIconButton(
-                                onClick = {
-                                    scope.launch { pagerState.animateScrollToPage(1) }
-                                },
-                                shape = CircleShape,
-                                colors = IconButtonDefaults.filledIconButtonColors(
-                                    containerColor = if (notificationCount > 0)
-                                        MaterialTheme.colorScheme.primaryContainer
-                                    else
-                                        MaterialTheme.colorScheme.surfaceBright
-                                )
-                            ) {
-                                Icon(
-                                    imageVector = if (notificationCount > 0) Icons.Filled.Notifications else Icons.Outlined.Notifications,
-                                    contentDescription = stringResource(R.string.action_notifications)
-                                )
-                            }
-
-                            if (notificationCount > 0) {
-                                Box(
-                                    modifier = Modifier
-                                        .align(Alignment.TopEnd)
-                                        .offset(x = 2.dp, y = (-2).dp)
-                                        .size(18.dp)
-                                        .clip(CircleShape)
-                                        .background(MaterialTheme.colorScheme.error),
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    Text(
-                                        text = if (notificationCount > 9) "9+" else notificationCount.toString(),
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = MaterialTheme.colorScheme.onError
-                                    )
-                                }
-                            }
-                        }
-
-                        FilledIconButton(
-                            onClick = onSettingsClick,
-                            shape = CircleShape,
-                            colors = IconButtonDefaults.filledIconButtonColors(
-                                containerColor = MaterialTheme.colorScheme.surfaceBright
-                            )
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Settings,
-                                contentDescription = stringResource(R.string.action_settings)
-                            )
-                        }
-                    },
+    var detailPredictive by remember { mutableStateOf<com.android.axion.sandbox.ui.motion.PredictiveBackScrub?>(null) }
+    val detailSessionSeq = remember { java.util.concurrent.atomic.AtomicLong(0L) }
+    val detailOpen = selectedApp != null
+    val detailBackEnabled = rootInteractive && searchBackEnabled && detailOpen
+    androidx.activity.compose.PredictiveBackHandler(enabled = detailBackEnabled) { progress ->
+        val sessionId = detailSessionSeq.incrementAndGet()
+        try {
+            progress.collect { event ->
+                detailPredictive = com.android.axion.sandbox.ui.motion.PredictiveBackScrub(
+                    sessionId,
+                    event.progress,
                 )
             }
-        ) { paddingValues ->
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(top = paddingValues.calculateTopPadding())
-            ) {
-                HorizontalPager(
-                    state = pagerState,
-                    modifier = Modifier.fillMaxSize()
-                ) { page ->
-                    when (page) {
-                        0 -> AppsTab(
-                            apps = filteredApps,
-                            isLoading = isLoading,
-                            onAppClick = { app -> selectedApp = app },
-                            isPrivateAreaExpanded = isPrivateAreaExpanded,
-                            onPrivateAreaExpandChange = onPrivateAreaExpandChange,
-                            onUnlockRequest = onUnlockRequest,
-                            isPrivateUnlocked = isPrivateUnlocked,
-                            isSecuritySetup = isSecuritySetup,
-                            onSetupSecurity = onSetupSecurity
-                        )
-                        1 -> NotificationsTab(
-                            isUnlocked = isPrivateUnlocked,
-                            onUnlockRequest = onUnlockRequest
-                        )
-                        2 -> VaultTab(
-                            isUnlocked = isPrivateUnlocked,
-                            onUnlockRequest = onUnlockRequest,
-                            onPickingFilesChange = onPickingFilesChange
-                        )
-                    }
-                }
+            selectedApp = null
+        } catch (_: kotlinx.coroutines.CancellationException) {
+        } finally {
+            if (detailPredictive?.sessionId == sessionId) detailPredictive = null
+        }
+    }
 
-                M3EFloatingToolbar(
-                    selectedTab = pagerState.currentPage,
-                    onTabSelected = { index ->
-                        scope.launch { pagerState.animateScrollToPage(index) }
+    com.android.axion.sandbox.ui.motion.MiuixPageTransition(
+        targetState = if (detailOpen) {
+            com.android.axion.sandbox.ui.motion.SandboxSubRoute.APP_DETAIL
+        } else {
+            com.android.axion.sandbox.ui.motion.SandboxSubRoute.ROOT
+        },
+        predictiveBack = detailPredictive,
+        onSettledAtRoot = { detailSnapshot = null },
+        rootContent = {
+            SandboxMainShell(
+                apps = filteredApps,
+                isLoading = isLoading,
+                searchQuery = searchQuery,
+                onSearchQueryChange = { searchQuery = it },
+                isSearchExpanded = isSearchExpanded,
+                onSearchExpandedChange = onSearchExpandedChange,
+                onSettingsClick = onSettingsClick,
+                isPrivateUnlocked = isPrivateUnlocked,
+                onUnlockRequest = onUnlockRequest,
+                isPrivateAreaExpanded = isPrivateAreaExpanded,
+                onPrivateAreaExpandChange = onPrivateAreaExpandChange,
+                isSecuritySetup = isSecuritySetup,
+                onSetupSecurity = onSetupSecurity,
+                selectedTabIndex = selectedTabIndex,
+                onTabIndexChange = onTabIndexChange,
+                notificationCount = notificationCount,
+                onPickingFilesChange = onPickingFilesChange,
+                onAppSelected = { app ->
+                    selectedApp = app
+                    detailSnapshot = app
+                },
+                searchBackEnabled = searchBackEnabled && !detailOpen,
+                rootInteractive = rootInteractive && !detailOpen,
+            )
+        },
+        childContent = {
+            detailSnapshot?.let { app ->
+                AppDetailScreen(
+                    app = app,
+                    onBackClick = { selectedApp = null },
+                    interactionsEnabled = detailOpen,
+                    onLockToggle = { target ->
+                        if (!detailOpen) return@AppDetailScreen
+                        scope.launch {
+                            toggleAppLock(context, target.packageName, target.userId, !target.isLocked)
+                            reloadApps()
+                        }
                     },
-                    notificationCount = notificationCount,
-                    modifier = Modifier
-                        .align(Alignment.BottomCenter)
-                        .navigationBarsPadding()
-                        .padding(bottom = 16.dp)
+                    onHideToggle = { target ->
+                        if (!detailOpen) return@AppDetailScreen
+                        scope.launch {
+                            val nextHideState = !target.isHidden
+                            toggleAppHidden(context, target.packageName, target.userId, nextHideState)
+                            if (nextHideState) {
+                                toggleAppLauncherHidden(context, target.packageName, target.userId, false)
+                                selectedApp = target.copy(isHidden = true, isLauncherHidden = false)
+                            } else {
+                                selectedApp = target.copy(isHidden = false)
+                            }
+                            reloadApps()
+                        }
+                    },
+                    onLauncherHideToggle = { target ->
+                        if (!detailOpen) return@AppDetailScreen
+                        scope.launch {
+                            val nextLauncherHideState = !target.isLauncherHidden
+                            toggleAppLauncherHidden(
+                                context,
+                                target.packageName,
+                                target.userId,
+                                nextLauncherHideState,
+                            )
+                            if (nextLauncherHideState) {
+                                toggleAppHidden(context, target.packageName, target.userId, false)
+                                selectedApp = target.copy(isLauncherHidden = true, isHidden = false)
+                            } else {
+                                selectedApp = target.copy(isLauncherHidden = false)
+                            }
+                            reloadApps()
+                        }
+                    },
+                    onSandboxToggle = { target ->
+                        if (!detailOpen) return@AppDetailScreen
+                        scope.launch {
+                            toggleAppSandboxed(
+                                context,
+                                target.packageName,
+                                target.userId,
+                                !target.isSandboxed,
+                            )
+                            reloadApps()
+                        }
+                    },
+                    onLaunch = { target ->
+                        if (!detailOpen) return@AppDetailScreen
+                        launchApp(context, target.packageName, target.userId)
+                    },
+                    isSecuritySetup = isSecuritySetup,
                 )
             }
-        }
-    }
-}
-
-@Composable
-private fun M3EFloatingToolbar(
-    selectedTab: Int,
-    onTabSelected: (Int) -> Unit,
-    notificationCount: Int,
-    modifier: Modifier = Modifier
-) {
-    val visibleState = remember { mutableStateOf(false) }
-    LaunchedEffect(Unit) {
-        visibleState.value = true
-    }
-
-    val offsetY by animateFloatAsState(
-        targetValue = if (visibleState.value) 0f else 120f,
-        animationSpec = tween(
-            durationMillis = 500,
-            easing = CubicBezierEasing(0.34f, 1.56f, 0.64f, 1f)
-        ),
-        label = "m3eToolbarSlideUp"
+        },
     )
-    val alpha by animateFloatAsState(
-        targetValue = if (visibleState.value) 1f else 0f,
-        animationSpec = tween(durationMillis = 350),
-        label = "m3eToolbarFadeIn"
-    )
-
-    Surface(
-        shape = CircleShape,
-        color = MaterialTheme.colorScheme.surfaceBright,
-        shadowElevation = 2.dp,
-        modifier = modifier
-            .graphicsLayer {
-                translationY = offsetY
-                this.alpha = alpha
-            }
-            .height(64.dp)
-    ) {
-        Row(
-            modifier = Modifier
-                .padding(horizontal = 8.dp, vertical = 8.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            M3EFloatingToolbarItem(
-                selected = selectedTab == 0,
-                onClick = { onTabSelected(0) },
-                icon = if (selectedTab == 0) Icons.Filled.Apps else Icons.Outlined.Apps,
-                contentDescription = stringResource(R.string.tab_apps)
-            )
-            M3EFloatingToolbarItem(
-                selected = selectedTab == 1,
-                onClick = { onTabSelected(1) },
-                icon = if (selectedTab == 1) Icons.Filled.Notifications else Icons.Outlined.Notifications,
-                contentDescription = stringResource(R.string.tab_notifications),
-                badgeCount = notificationCount
-            )
-            M3EFloatingToolbarItem(
-                selected = selectedTab == 2,
-                onClick = { onTabSelected(2) },
-                icon = if (selectedTab == 2) Icons.Filled.FolderOpen else Icons.Outlined.FolderOpen,
-                contentDescription = stringResource(R.string.tab_vault)
-            )
-        }
-    }
-}
-
-@Composable
-private fun M3EFloatingToolbarItem(
-    selected: Boolean,
-    onClick: () -> Unit,
-    icon: ImageVector,
-    contentDescription: String,
-    badgeCount: Int = 0
-) {
-    val scale by animateFloatAsState(
-        targetValue = if (selected) 1.08f else 1.0f,
-        animationSpec = spring(
-            dampingRatio = Spring.DampingRatioMediumBouncy,
-            stiffness = Spring.StiffnessMedium
-        ),
-        label = "m3eButtonScale"
-    )
-
-    val containerColor by animateColorAsState(
-        targetValue = if (selected) MaterialTheme.colorScheme.primary else Color.Transparent,
-        animationSpec = spring(stiffness = Spring.StiffnessMedium),
-        label = "m3eButtonContainerColor"
-    )
-
-    val contentColor by animateColorAsState(
-        targetValue = if (selected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
-        animationSpec = spring(stiffness = Spring.StiffnessMedium),
-        label = "m3eButtonContentColor"
-    )
-
-    Box(
-        modifier = Modifier
-            .size(48.dp)
-            .graphicsLayer {
-                scaleX = scale
-                scaleY = scale
-            }
-            .clip(CircleShape)
-            .background(containerColor)
-            .clickable(onClick = onClick),
-        contentAlignment = Alignment.Center
-    ) {
-        Box {
-            Icon(
-                imageVector = icon,
-                contentDescription = contentDescription,
-                tint = contentColor,
-                modifier = Modifier.size(24.dp)
-            )
-
-            if (badgeCount > 0) {
-                Box(
-                    modifier = Modifier
-                        .align(Alignment.TopEnd)
-                        .offset(x = 6.dp, y = (-4).dp)
-                        .size(if (badgeCount > 9) 16.dp else 14.dp)
-                        .clip(CircleShape)
-                        .background(if (selected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.error),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(
-                        text = if (badgeCount > 9) "9+" else badgeCount.toString(),
-                        style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.sp),
-                        color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onError
-                    )
-                }
-            }
-        }
-    }
 }
 
 @OptIn(ExperimentalMaterial3ExpressiveApi::class)
@@ -740,11 +557,11 @@ private fun M3EFloatingToolbarItem(
 private fun SandboxOptionsDropdown(
     app: AppInfo,
     sandboxManager: AxSandboxManager?,
-    onSandboxToggle: (AppInfo) -> Unit
+    onSandboxToggle: (AppInfo) -> Unit,
+    interactionsEnabled: Boolean = true,
+    groupTitleRes: Int = R.string.sandbox_options_title,
 ) {
     val scope = rememberCoroutineScope()
-    val accentColor = MaterialTheme.colorScheme.secondary
-    var expanded by rememberSaveable { mutableStateOf(app.isSandboxed) }
 
     var restrictInternet by remember(app.packageName, app.userId) {
         val gids = sandboxManager?.getRestrictedGids(app.packageName, app.userId)
@@ -761,53 +578,59 @@ private fun SandboxOptionsDropdown(
         mutableStateOf(sandboxManager?.isSandboxDataIsolationEnabled(app.packageName, app.userId) == true)
     }
 
-    PreferenceGroup(
-        title = stringResource(R.string.sandbox_options_title),
-        collapsible = true,
-        initiallyExpanded = expanded,
-    ) {
-        item {
-            SwitchPreference(
+    LocalPreferenceGroup(title = stringResource(groupTitleRes)) {
+        row { pos ->
+            LocalSwitchPreference(
                 title = stringResource(R.string.action_isolate),
                 summary = stringResource(R.string.isolate_app_description),
+                position = pos,
                 checked = app.isSandboxed,
-                onCheckedChange = { onSandboxToggle(app) },
+                onCheckedChange = { if (interactionsEnabled) onSandboxToggle(app) },
+                enabled = interactionsEnabled,
             )
         }
-        item {
-            SwitchPreference(
+        row { pos ->
+            LocalSwitchPreference(
                 title = stringResource(R.string.restrict_internet_title),
                 summary = stringResource(R.string.restrict_internet_description),
+                position = pos,
                 checked = restrictInternet,
+                enabled = interactionsEnabled && sandboxManager != null,
                 onCheckedChange = {
-                    if (sandboxManager == null) return@SwitchPreference
+                    if (!interactionsEnabled || sandboxManager == null) return@LocalSwitchPreference
                     restrictInternet = !restrictInternet
                     scope.launch(Dispatchers.IO) {
                         val current = sandboxManager.getRestrictedGids(app.packageName, app.userId)
-                                ?.toMutableList() ?: mutableListOf()
+                            ?.toMutableList() ?: mutableListOf()
                         if (restrictInternet) {
-                            if (!current.contains(AxSandboxManager.GID_INET))
+                            if (!current.contains(AxSandboxManager.GID_INET)) {
                                 current.add(AxSandboxManager.GID_INET)
+                            }
                         } else {
                             current.remove(AxSandboxManager.GID_INET)
                         }
-                        sandboxManager.setRestrictedGids(app.packageName,
-                                current.toIntArray(), app.userId)
+                        sandboxManager.setRestrictedGids(
+                            app.packageName,
+                            current.toIntArray(),
+                            app.userId,
+                        )
                     }
                 },
             )
         }
-        item {
-            SwitchPreference(
+        row { pos ->
+            LocalSwitchPreference(
                 title = stringResource(R.string.restrict_storage_title),
                 summary = stringResource(R.string.restrict_storage_description),
+                position = pos,
                 checked = restrictStorage,
+                enabled = interactionsEnabled && sandboxManager != null,
                 onCheckedChange = {
-                    if (sandboxManager == null) return@SwitchPreference
+                    if (!interactionsEnabled || sandboxManager == null) return@LocalSwitchPreference
                     restrictStorage = !restrictStorage
                     scope.launch(Dispatchers.IO) {
                         val current = sandboxManager.getRestrictedGids(app.packageName, app.userId)
-                                ?.toMutableList() ?: mutableListOf()
+                            ?.toMutableList() ?: mutableListOf()
                         val storageGids = AxSandboxManager.STORAGE_GIDS
                         if (restrictStorage) {
                             for (gid in storageGids) {
@@ -816,23 +639,31 @@ private fun SandboxOptionsDropdown(
                         } else {
                             current.removeAll(storageGids.toSet())
                         }
-                        sandboxManager.setRestrictedGids(app.packageName,
-                                current.toIntArray(), app.userId)
+                        sandboxManager.setRestrictedGids(
+                            app.packageName,
+                            current.toIntArray(),
+                            app.userId,
+                        )
                     }
                 },
             )
         }
-        item {
-            SwitchPreference(
+        row { pos ->
+            LocalSwitchPreference(
                 title = stringResource(R.string.data_isolation_title),
                 summary = stringResource(R.string.data_isolation_description),
+                position = pos,
                 checked = dataIsolation,
+                enabled = interactionsEnabled && sandboxManager != null,
                 onCheckedChange = {
-                    if (sandboxManager == null) return@SwitchPreference
+                    if (!interactionsEnabled || sandboxManager == null) return@LocalSwitchPreference
                     dataIsolation = !dataIsolation
                     scope.launch(Dispatchers.IO) {
                         sandboxManager.setSandboxDataIsolationEnabled(
-                                app.packageName, dataIsolation, app.userId)
+                            app.packageName,
+                            dataIsolation,
+                            app.userId,
+                        )
                     }
                 },
             )
@@ -869,64 +700,77 @@ private val SPOOF_ACCESSIBILITY_KEYS = listOf(
 @Composable
 private fun SpoofSettingsDropdown(
     app: AppInfo,
-    sandboxManager: AxSandboxManager?
+    sandboxManager: AxSandboxManager?,
+    interactionsEnabled: Boolean = true,
+    groupTitleRes: Int = R.string.spoof_settings_title,
 ) {
     if (sandboxManager == null) return
 
     val scope = rememberCoroutineScope()
-    val accentColor = MaterialTheme.colorScheme.tertiary
-    var expanded by rememberSaveable { mutableStateOf(false) }
 
     val enabledSettings = remember(app.packageName, app.userId) {
         mutableStateMapOf<String, Boolean>().apply {
             SPOOF_SETTINGS.forEach { entry ->
-                put(entry.key, sandboxManager.isSpoofSettingEnabled(
-                        app.packageName, entry.key, app.userId))
+                put(
+                    entry.key,
+                    sandboxManager.isSpoofSettingEnabled(app.packageName, entry.key, app.userId),
+                )
             }
-            put("accessibility_spoof", SPOOF_ACCESSIBILITY_KEYS.all { key ->
-                sandboxManager.isSpoofSettingEnabled(app.packageName, key, app.userId)
-            })
+            put(
+                "accessibility_spoof",
+                SPOOF_ACCESSIBILITY_KEYS.all { key ->
+                    sandboxManager.isSpoofSettingEnabled(app.packageName, key, app.userId)
+                },
+            )
         }
     }
 
-    val hasAnyEnabled by remember { derivedStateOf { enabledSettings.values.any { it } } }
-
-    PreferenceGroup(
-        title = stringResource(R.string.spoof_settings_title),
-        collapsible = true,
-        initiallyExpanded = expanded,
-    ) {
+    LocalPreferenceGroup(title = stringResource(groupTitleRes)) {
         SPOOF_SETTINGS.forEach { entry ->
-            item {
+            row { pos ->
                 val isEnabled = enabledSettings[entry.key] ?: false
-                SwitchPreference(
+                LocalSwitchPreference(
                     title = stringResource(entry.titleRes),
                     summary = stringResource(entry.descriptionRes),
+                    position = pos,
                     checked = isEnabled,
+                    enabled = interactionsEnabled,
                     onCheckedChange = {
+                        if (!interactionsEnabled) return@LocalSwitchPreference
                         val newValue = !isEnabled
                         enabledSettings[entry.key] = newValue
                         scope.launch(Dispatchers.IO) {
                             sandboxManager.setSpoofSettingEnabled(
-                                    app.packageName, entry.key, newValue, app.userId)
+                                app.packageName,
+                                entry.key,
+                                newValue,
+                                app.userId,
+                            )
                         }
                     },
                 )
             }
         }
-        item {
+        row { pos ->
             val accessibilityEnabled = enabledSettings["accessibility_spoof"] ?: false
-            SwitchPreference(
+            LocalSwitchPreference(
                 title = stringResource(R.string.spoof_accessibility),
                 summary = stringResource(R.string.spoof_accessibility_description),
+                position = pos,
                 checked = accessibilityEnabled,
+                enabled = interactionsEnabled,
                 onCheckedChange = {
+                    if (!interactionsEnabled) return@LocalSwitchPreference
                     val newValue = !accessibilityEnabled
                     enabledSettings["accessibility_spoof"] = newValue
                     scope.launch(Dispatchers.IO) {
                         SPOOF_ACCESSIBILITY_KEYS.forEach { key ->
                             sandboxManager.setSpoofSettingEnabled(
-                                    app.packageName, key, newValue, app.userId)
+                                app.packageName,
+                                key,
+                                newValue,
+                                app.userId,
+                            )
                         }
                     }
                 },
@@ -940,31 +784,51 @@ private fun SpoofSettingsDropdown(
 private fun HideSettingsDropdown(
     app: AppInfo,
     onHideToggle: (AppInfo) -> Unit,
-    onLauncherHideToggle: (AppInfo) -> Unit
+    onLauncherHideToggle: (AppInfo) -> Unit,
+    interactionsEnabled: Boolean = true,
+    onLockToggle: ((AppInfo) -> Unit)? = null,
+    groupTitleRes: Int = R.string.hide_settings_title,
 ) {
-    val expanded = remember(app.packageName, app.userId) { app.isHidden || app.isLauncherHidden }
-
-    PreferenceGroup(
-        title = stringResource(R.string.hide_settings_title),
-        collapsible = true,
-        initiallyExpanded = expanded,
-    ) {
-        item {
-            SwitchPreference(
+    LocalPreferenceGroup(title = stringResource(groupTitleRes)) {
+        if (onLockToggle != null) {
+            row { pos ->
+                LocalSwitchPreference(
+                    title = stringResource(R.string.lock_app_title),
+                    summary = stringResource(R.string.lock_app_description),
+                    position = pos,
+                    checked = app.isLocked,
+                    onCheckedChange = { if (interactionsEnabled) onLockToggle(app) },
+                    icon = if (app.isLocked) Icons.Filled.Lock else Icons.Outlined.Lock,
+                    enabled = interactionsEnabled,
+                )
+            }
+        }
+        row { pos ->
+            LocalSwitchPreference(
                 title = stringResource(R.string.hide_app_title),
-                summary = if (app.isHidden) stringResource(R.string.hide_app_description_on)
-                else stringResource(R.string.hide_app_description_off),
+                summary = if (app.isHidden) {
+                    stringResource(R.string.hide_app_description_on)
+                } else {
+                    stringResource(R.string.hide_app_description_off)
+                },
+                position = pos,
                 checked = app.isHidden,
-                onCheckedChange = { onHideToggle(app) },
+                enabled = interactionsEnabled,
+                onCheckedChange = { if (interactionsEnabled) onHideToggle(app) },
             )
         }
-        item {
-            SwitchPreference(
+        row { pos ->
+            LocalSwitchPreference(
                 title = stringResource(R.string.hide_from_launcher_title),
-                summary = if (app.isLauncherHidden) stringResource(R.string.hide_from_launcher_description_on)
-                else stringResource(R.string.hide_from_launcher_description_off),
+                summary = if (app.isLauncherHidden) {
+                    stringResource(R.string.hide_from_launcher_description_on)
+                } else {
+                    stringResource(R.string.hide_from_launcher_description_off)
+                },
+                position = pos,
                 checked = app.isLauncherHidden,
-                onCheckedChange = { onLauncherHideToggle(app) },
+                enabled = interactionsEnabled,
+                onCheckedChange = { if (interactionsEnabled) onLauncherHideToggle(app) },
             )
         }
     }
@@ -980,28 +844,50 @@ fun AppDetailScreen(
     onLauncherHideToggle: (AppInfo) -> Unit,
     onSandboxToggle: (AppInfo) -> Unit,
     onLaunch: (AppInfo) -> Unit,
-    isSecuritySetup: Boolean = false
+    isSecuritySetup: Boolean = false,
+    interactionsEnabled: Boolean = true,
 ) {
-    AxionScaffold(
+    SandboxSubmenuScaffold(
         title = app.label,
         onBackClick = onBackClick,
-        collapsedByDefault = false,
         actions = {
-            FilledTonalIconButton(onClick = { onLaunch(app) }) {
-                Icon(
-                    imageVector = Icons.Default.OpenInNew,
-                    contentDescription = stringResource(R.string.action_launch)
-                )
+            IconButton(
+                onClick = { if (interactionsEnabled) onLaunch(app) },
+                enabled = interactionsEnabled,
+                modifier = Modifier.size(MiuixTitleMotion.BackTouchMinDp.dp),
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(MiuixTitleMotion.BackCircleDp.dp)
+                        .background(
+                            color = MaterialTheme.colorScheme.surfaceContainerHighest,
+                            shape = CircleShape,
+                        ),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.OpenInNew,
+                        contentDescription = stringResource(R.string.action_launch),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(MiuixTitleMotion.BackArrowDp.dp),
+                    )
+                }
             }
         },
-    ) { paddingValues ->
+    ) {
         LazyColumn(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(paddingValues),
-            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
+            state = listState,
+            overscrollEffect = listOverscrollEffect,
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(
+                start = 16.dp,
+                top = 8.dp,
+                end = 16.dp,
+                bottom = 16.dp + WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding(),
+            ),
             verticalArrangement = Arrangement.spacedBy(12.dp),
-            horizontalAlignment = Alignment.CenterHorizontally
+            horizontalAlignment = Alignment.CenterHorizontally,
+            userScrollEnabled = interactionsEnabled,
         ) {
             item {
                 Box(
@@ -1031,24 +917,13 @@ fun AppDetailScreen(
 
             if (isSecuritySetup) {
                 item {
-                    PreferenceGroup {
-                        item {
-                            SwitchPreference(
-                                title = stringResource(R.string.lock_app_title),
-                                summary = stringResource(R.string.lock_app_description),
-                                checked = app.isLocked,
-                                onCheckedChange = { onLockToggle(app) },
-                                icon = if (app.isLocked) Icons.Filled.Lock else Icons.Outlined.Lock,
-                            )
-                        }
-                    }
-                }
-
-                item {
                     HideSettingsDropdown(
                         app = app,
                         onHideToggle = onHideToggle,
-                        onLauncherHideToggle = onLauncherHideToggle
+                        onLauncherHideToggle = onLauncherHideToggle,
+                        interactionsEnabled = interactionsEnabled,
+                        onLockToggle = onLockToggle,
+                        groupTitleRes = R.string.detail_section_lock_hide,
                     )
                 }
             }
@@ -1061,7 +936,9 @@ fun AppDetailScreen(
                 SandboxOptionsDropdown(
                     app = app,
                     sandboxManager = sandboxManager,
-                    onSandboxToggle = onSandboxToggle
+                    onSandboxToggle = onSandboxToggle,
+                    interactionsEnabled = interactionsEnabled,
+                    groupTitleRes = R.string.detail_section_isolation,
                 )
             }
 
@@ -1072,7 +949,9 @@ fun AppDetailScreen(
                 }
                 SpoofSettingsDropdown(
                     app = app,
-                    sandboxManager = sandboxManager
+                    sandboxManager = sandboxManager,
+                    interactionsEnabled = interactionsEnabled,
+                    groupTitleRes = R.string.detail_section_spoofing,
                 )
             }
 
@@ -1092,7 +971,14 @@ fun AppsTab(
     onUnlockRequest: () -> Unit = {},
     isPrivateUnlocked: Boolean = false,
     isSecuritySetup: Boolean = false,
-    onSetupSecurity: () -> Unit = {}
+    onSetupSecurity: () -> Unit = {},
+    contentPadding: PaddingValues = PaddingValues(0.dp),
+    listOverscrollEffect: androidx.compose.foundation.OverscrollEffect? = null,
+    gridState: androidx.compose.foundation.lazy.grid.LazyGridState =
+        androidx.compose.foundation.lazy.grid.rememberLazyGridState(),
+    listState: androidx.compose.foundation.lazy.LazyListState =
+        androidx.compose.foundation.lazy.rememberLazyListState(),
+    useAlwaysStretch: Boolean = false,
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -1104,6 +990,9 @@ fun AppsTab(
     val sandboxedApps = remember(apps) { apps.filter { it.isSandboxed && !it.isLocked && !it.isHidden } }
     val regularApps = remember(apps) { apps.filter { !it.isLocked && !it.isHidden && !it.isSandboxed && !it.isSystem } }
     val systemApps = remember(apps) { apps.filter { !it.isLocked && !it.isHidden && !it.isSandboxed && it.isSystem } }
+    val displayedApps = remember(regularApps, systemApps, showSystemApps) {
+        if (showSystemApps) regularApps + systemApps else regularApps
+    }
 
     val effectiveExpanded = isPrivateUnlocked && isPrivateAreaExpanded
 
@@ -1152,6 +1041,16 @@ fun AppsTab(
         selectedApp = null
     }
 
+    // Relock: dong sheet private, khong giu noi dung nhay cam.
+    LaunchedEffect(isPrivateUnlocked) {
+        if (!isPrivateUnlocked && selectedApp != null &&
+            (selectedApp!!.isLocked || selectedApp!!.isHidden)
+        ) {
+            showBottomSheet = false
+            selectedApp = null
+        }
+    }
+
     if (showBottomSheet && selectedApp != null) {
         BottomSheetDialog(
             onDismiss = onSheetDismiss,
@@ -1164,21 +1063,39 @@ fun AppsTab(
                 onLauncherHideToggle = onLauncherHideToggle,
                 onSandboxToggle = onSandboxToggle,
                 onLaunch = { app -> launchApp(context, app.packageName, app.userId) },
+                onOpenDetails = { app ->
+                    onSheetDismiss()
+                    onAppClick(app)
+                },
                 onDismiss = onSheetDismiss,
             )
         }
     }
 
+    val shortStretchModifier = if (useAlwaysStretch || isLoading || apps.isEmpty()) {
+        Modifier
+            .fillMaxSize()
+            .then(
+                if (listOverscrollEffect != null) {
+                    Modifier.miuixAlwaysVerticalStretch(listOverscrollEffect)
+                } else {
+                    Modifier
+                },
+            )
+    } else {
+        Modifier.fillMaxSize()
+    }
+
     if (isLoading) {
         Box(
-            modifier = Modifier.fillMaxSize(),
+            modifier = shortStretchModifier,
             contentAlignment = Alignment.Center
         ) {
             LoadingIndicator()
         }
     } else if (apps.isEmpty()) {
         Box(
-            modifier = Modifier.fillMaxSize(),
+            modifier = shortStretchModifier,
             contentAlignment = Alignment.Center
         ) {
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -1197,183 +1114,266 @@ fun AppsTab(
             }
         }
     } else {
-        val scrollState = rememberScrollState()
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .verticalScroll(scrollState)
-                .padding(horizontal = 16.dp, vertical = 8.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
+        // Private content khong compose khi locked / chua expand.
+        val privateVisible = effectiveExpanded
+        LazyColumn(
+            state = listState,
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(
+                start = 16.dp,
+                end = 16.dp,
+                top = 8.dp,
+                bottom = 4.dp + contentPadding.calculateBottomPadding(),
+            ),
+            verticalArrangement = Arrangement.spacedBy(2.dp),
+            overscrollEffect = listOverscrollEffect,
         ) {
-            if (!isSecuritySetup) {
-                PreferenceGroup(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(vertical = 8.dp)
-                ) {
-                    item {
-                        ClickablePreference(
-                            title = stringResource(R.string.setup_private_apps_title),
-                            summary = stringResource(R.string.setup_private_apps_description),
-                            icon = Icons.Filled.Lock,
-                            onClick = onSetupSecurity
-                        )
-                    }
-                }
-            } else if (privateApps.isNotEmpty()) {
-                CollapsibleSectionHeader(
-                    icon = if (effectiveExpanded) Icons.Filled.LockOpen else Icons.Filled.Lock,
-                    title = stringResource(R.string.section_private_apps),
+            // 1. The noi bat "Ung dung rieng tu" theo dung layout goi y trong anh
+            item(
+                key = "card_private",
+                contentType = "card_private",
+            ) {
+                PrivateAppsCard(
+                    isSecuritySetup = isSecuritySetup,
+                    isUnlocked = isPrivateUnlocked,
                     count = privateApps.size,
-                    color = MaterialTheme.colorScheme.primary,
                     isExpanded = effectiveExpanded,
-                    onExpandChange = { wantExpand ->
-                        if (wantExpand && !isPrivateUnlocked) {
-                            onUnlockRequest()
-                        } else {
-                            onPrivateAreaExpandChange(wantExpand)
-                        }
-                    }
+                    onSetupSecurity = onSetupSecurity,
+                    onUnlockRequest = onUnlockRequest,
+                    onExpandChange = onPrivateAreaExpandChange,
+                    modifier = Modifier.padding(bottom = 6.dp),
                 )
+            }
 
-                if (effectiveExpanded) {
-                    NonLazyAppGrid(
-                        apps = privateApps,
-                        keyPrefix = "private",
-                        onAppClick = { app ->
+            if (effectiveExpanded && privateApps.isNotEmpty()) {
+                itemsIndexed(
+                    items = privateApps,
+                    key = { _, app -> "private_${app.key}" },
+                    contentType = { _, _ -> "app" },
+                ) { index, app ->
+                    val pos = localPrefPosition(index, privateApps.size)
+                    AppListPreferenceItem(
+                        app = app,
+                        position = pos,
+                        onClick = {
                             selectedApp = app
                             showBottomSheet = true
-                        }
+                        },
                     )
                 }
-
-                Spacer(modifier = Modifier.height(8.dp))
             }
 
             if (sandboxedApps.isNotEmpty()) {
-                SectionHeader(
-                    icon = Icons.Filled.Security,
-                    title = stringResource(R.string.section_isolated_apps),
-                    count = sandboxedApps.size,
-                    color = MaterialTheme.colorScheme.secondary
-                )
-
-                NonLazyAppGrid(
-                    apps = sandboxedApps,
-                    keyPrefix = "sandboxed",
-                    onAppClick = { app ->
-                        selectedApp = app
-                        showBottomSheet = true
-                    }
-                )
-
-                Spacer(modifier = Modifier.height(8.dp))
-            }
-
-            SectionHeader(
-                icon = Icons.Filled.Apps,
-                title = stringResource(R.string.section_all_apps),
-                count = regularApps.size,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                trailing = {
-                    FilterChip(
-                        selected = showSystemApps,
-                        onClick = { showSystemApps = !showSystemApps },
-                        label = {
-                            Text(
-                                text = stringResource(R.string.show_system_apps),
-                                style = MaterialTheme.typography.labelSmall
-                            )
-                        },
-                        leadingIcon = if (showSystemApps) {
-                            {
-                                Icon(
-                                    imageVector = Icons.Default.Check,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(14.dp)
-                                )
-                            }
-                        } else null,
-                        colors = FilterChipDefaults.filterChipColors(
-                            selectedContainerColor = MaterialTheme.colorScheme.primaryContainer,
-                            selectedLabelColor = MaterialTheme.colorScheme.onPrimaryContainer,
-                            selectedLeadingIconColor = MaterialTheme.colorScheme.onPrimaryContainer
-                        ),
-                        modifier = Modifier.height(28.dp)
+                item(
+                    key = "hdr_sandboxed",
+                    contentType = "section_header",
+                ) {
+                    SectionHeader(
+                        icon = Icons.Filled.Security,
+                        title = stringResource(R.string.section_isolated_apps),
+                        count = sandboxedApps.size,
+                        color = MaterialTheme.colorScheme.secondary,
                     )
                 }
-            )
-
-            NonLazyAppGrid(
-                apps = regularApps,
-                keyPrefix = "regular",
-                onAppClick = { app ->
-                    selectedApp = app
-                    showBottomSheet = true
+                itemsIndexed(
+                    items = sandboxedApps,
+                    key = { _, app -> "sandboxed_${app.key}" },
+                    contentType = { _, _ -> "app" },
+                ) { index, app ->
+                    val pos = localPrefPosition(index, sandboxedApps.size)
+                    AppListPreferenceItem(
+                        app = app,
+                        position = pos,
+                        onClick = {
+                            selectedApp = app
+                            showBottomSheet = true
+                        },
+                    )
                 }
-            )
+            }
 
-            if (showSystemApps && systemApps.isNotEmpty()) {
-                Spacer(modifier = Modifier.height(16.dp))
-                SectionHeader(
-                    icon = Icons.Default.Security,
-                    title = stringResource(R.string.show_system_apps),
-                    count = systemApps.size,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
-                )
-
-                NonLazyAppGrid(
-                    apps = systemApps,
-                    keyPrefix = "system",
-                    onAppClick = { app ->
-                        selectedApp = app
-                        showBottomSheet = true
-                    }
+            // 2. Tieu de "Tat ca ung dung" voi bo loc "He thong v" ben phai theo anh goi y
+            item(
+                key = "hdr_regular",
+                contentType = "section_header",
+            ) {
+                AllAppsSectionHeader(
+                    count = displayedApps.size,
+                    showSystemApps = showSystemApps,
+                    onShowSystemAppsChange = { showSystemApps = it },
                 )
             }
 
-            Spacer(modifier = Modifier.height(100.dp))
+            // 3. Danh sach tat ca ung dung dang the nhom bo goc
+            itemsIndexed(
+                items = displayedApps,
+                key = { _, app -> "app_${app.key}" },
+                contentType = { _, _ -> "app" },
+            ) { index, app ->
+                val pos = localPrefPosition(index, displayedApps.size)
+                AppListPreferenceItem(
+                    app = app,
+                    position = pos,
+                    onClick = {
+                        selectedApp = app
+                        showBottomSheet = true
+                    },
+                )
+            }
         }
     }
 }
 
+/**
+ * The ung dung rieng tu noi bat theo bo cuc de xuat trong anh:
+ * Container xanh reu nhe, icon khoa dong khung bo, tieu de va so luong, chevron phai.
+ */
 @Composable
-private fun NonLazyAppGrid(
-    apps: List<AppInfo>,
+private fun PrivateAppsCard(
+    isSecuritySetup: Boolean,
+    isUnlocked: Boolean,
+    count: Int,
+    isExpanded: Boolean,
+    onSetupSecurity: () -> Unit,
+    onUnlockRequest: () -> Unit,
+    onExpandChange: (Boolean) -> Unit,
     modifier: Modifier = Modifier,
-    columns: Int = 4,
-    horizontalSpacing: Dp = 4.dp,
-    verticalSpacing: Dp = 8.dp,
-    keyPrefix: String = "",
-    onAppClick: (AppInfo) -> Unit
 ) {
-    val chunkedApps = remember(apps, columns) { apps.chunked(columns) }
-    Column(
-        modifier = modifier.fillMaxWidth(),
-        verticalArrangement = Arrangement.spacedBy(verticalSpacing)
+    val interactionSource = remember { MutableInteractionSource() }
+    val title = stringResource(R.string.section_private_apps)
+    val subtitle = if (!isSecuritySetup) {
+        stringResource(R.string.setup_private_apps_description)
+    } else {
+        stringResource(R.string.private_apps_count_format, count)
+    }
+    val onClick = {
+        if (!isSecuritySetup) {
+            onSetupSecurity()
+        } else if (!isUnlocked) {
+            onUnlockRequest()
+        } else {
+            onExpandChange(!isExpanded)
+        }
+    }
+
+    val cardBg = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.45f)
+    val iconBadgeBg = MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)
+    val iconTint = MaterialTheme.colorScheme.primary
+
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .heightIn(min = 72.dp)
+            .miuixPressScale(interactionSource)
+            .clip(RoundedCornerShape(20.dp))
+            .background(cardBg)
+            .clickable(
+                interactionSource = interactionSource,
+                indication = ripple(),
+                onClick = onClick,
+            )
+            .padding(horizontal = 16.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
     ) {
-        for (row in chunkedApps) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(horizontalSpacing)
-            ) {
-                for (app in row) {
-                    Box(modifier = Modifier.weight(1f)) {
-                        key("${keyPrefix}_${app.key}") {
-                            AppGridItem(
-                                app = app,
-                                onClick = { onAppClick(app) }
-                            )
-                        }
-                    }
-                }
-                val remainder = columns - row.size
-                if (remainder > 0) {
-                    repeat(remainder) {
-                        Spacer(modifier = Modifier.weight(1f))
-                    }
-                }
-            }
+        Box(
+            modifier = Modifier
+                .size(44.dp)
+                .clip(RoundedCornerShape(12.dp))
+                .background(iconBadgeBg),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                imageVector = if (isUnlocked && isExpanded) Icons.Filled.LockOpen else Icons.Filled.Lock,
+                contentDescription = null,
+                tint = iconTint,
+                modifier = Modifier.size(22.dp),
+            )
+        }
+        Spacer(Modifier.width(14.dp))
+        Column(
+            modifier = Modifier
+                .weight(1f)
+                .padding(end = 12.dp),
+            verticalArrangement = Arrangement.Center,
+        ) {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.onSurface,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Spacer(Modifier.height(2.dp))
+            Text(
+                text = subtitle,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        Icon(
+            painter = painterResource(R.drawable.ic_settings_expressive_chevron),
+            contentDescription = null,
+            modifier = Modifier.size(18.dp),
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+}
+
+/**
+ * Hang tieu de "Tat ca ung dung" voi bo loc dropdown "He thong v" ben phai theo anh goi y.
+ */
+@Composable
+private fun AllAppsSectionHeader(
+    count: Int,
+    showSystemApps: Boolean,
+    onShowSystemAppsChange: (Boolean) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(top = 16.dp, bottom = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween,
+    ) {
+        Text(
+            text = stringResource(R.string.section_all_apps),
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.Bold,
+            color = MaterialTheme.colorScheme.onSurface,
+        )
+
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier
+                .clip(RoundedCornerShape(8.dp))
+                .clickable { onShowSystemAppsChange(!showSystemApps) }
+                .padding(horizontal = 6.dp, vertical = 4.dp),
+        ) {
+            Text(
+                text = stringResource(R.string.filter_system_apps),
+                style = MaterialTheme.typography.bodyMedium,
+                color = if (showSystemApps) {
+                    MaterialTheme.colorScheme.primary
+                } else {
+                    MaterialTheme.colorScheme.onSurfaceVariant
+                },
+                fontWeight = if (showSystemApps) FontWeight.SemiBold else FontWeight.Normal,
+            )
+            Spacer(Modifier.width(4.dp))
+            Icon(
+                imageVector = if (showSystemApps) Icons.Default.Visibility else Icons.Default.VisibilityOff,
+                contentDescription = stringResource(R.string.show_system_apps),
+                modifier = Modifier.size(18.dp),
+                tint = if (showSystemApps) {
+                    MaterialTheme.colorScheme.primary
+                } else {
+                    MaterialTheme.colorScheme.onSurfaceVariant
+                },
+            )
         }
     }
 }
@@ -1385,36 +1385,57 @@ private fun SectionHeader(
     title: String,
     count: Int,
     color: Color,
-    trailing: (@Composable () -> Unit)? = null
+    trailing: (@Composable () -> Unit)? = null,
 ) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(vertical = 8.dp),
-        verticalAlignment = Alignment.CenterVertically
+            .padding(top = 16.dp, bottom = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
     ) {
-        Icon(
-            imageVector = icon,
-            contentDescription = null,
-            tint = color,
-            modifier = Modifier.size(18.dp)
-        )
-        Spacer(modifier = Modifier.width(8.dp))
+        Box(
+            modifier = Modifier
+                .size(32.dp)
+                .clip(CircleShape)
+                .background(color.copy(alpha = 0.12f)),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                tint = color,
+                modifier = Modifier.size(18.dp),
+            )
+        }
+        Spacer(modifier = Modifier.width(10.dp))
         Row(
             modifier = Modifier.weight(1f),
-            verticalAlignment = Alignment.CenterVertically
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             Text(
                 text = title,
-                style = MaterialTheme.typography.labelLargeEmphasized,
-                color = color
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold,
+                color = color,
             )
-            Spacer(modifier = Modifier.width(6.dp))
-            Text(
-                text = "($count)",
-                style = MaterialTheme.typography.bodySmall,
-                color = color.copy(alpha = 0.7f)
-            )
+            Surface(
+                shape = CircleShape,
+                color = color.copy(alpha = 0.12f),
+                modifier = Modifier.height(22.dp),
+            ) {
+                Box(
+                    modifier = Modifier.padding(horizontal = 8.dp),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        text = "$count",
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = color,
+                    )
+                }
+            }
         }
         if (trailing != null) {
             Spacer(modifier = Modifier.width(12.dp))
@@ -1431,56 +1452,64 @@ private fun CollapsibleSectionHeader(
     count: Int,
     color: Color,
     isExpanded: Boolean,
-    onExpandChange: (Boolean) -> Unit
+    onExpandChange: (Boolean) -> Unit,
 ) {
     val motionScheme = MaterialTheme.motionScheme
     val rotationAngle by animateFloatAsState(
         targetValue = if (isExpanded) 180f else 0f,
         animationSpec = motionScheme.defaultSpatialSpec(),
-        label = "chevron"
+        label = "chevron",
     )
+    val interactionSource = remember { MutableInteractionSource() }
 
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            .padding(top = 16.dp, bottom = 8.dp)
+            .miuixPressScale(interactionSource)
             .clip(MaterialTheme.shapes.large)
-            .clickable { onExpandChange(!isExpanded) }
-            .padding(horizontal = 8.dp, vertical = 12.dp),
-        verticalAlignment = Alignment.CenterVertically
+            .clickable(
+                interactionSource = interactionSource,
+                indication = ripple(),
+            ) { onExpandChange(!isExpanded) }
+            .padding(horizontal = 4.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
     ) {
         Box(
             modifier = Modifier
                 .size(32.dp)
                 .clip(CircleShape)
                 .background(color.copy(alpha = 0.12f)),
-            contentAlignment = Alignment.Center
+            contentAlignment = Alignment.Center,
         ) {
             Icon(
                 imageVector = icon,
                 contentDescription = null,
                 tint = color,
-                modifier = Modifier.size(18.dp)
+                modifier = Modifier.size(18.dp),
             )
         }
-        Spacer(modifier = Modifier.width(12.dp))
+        Spacer(modifier = Modifier.width(10.dp))
         Text(
             text = title,
-            style = MaterialTheme.typography.labelLargeEmphasized,
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.SemiBold,
             color = color,
-            modifier = Modifier.weight(1f)
+            modifier = Modifier.weight(1f),
         )
         Row(
             modifier = Modifier
                 .wrapContentSize()
                 .clip(CircleShape)
                 .background(color.copy(alpha = 0.12f)),
-            verticalAlignment = Alignment.CenterVertically
+            verticalAlignment = Alignment.CenterVertically,
         ) {
             Spacer(modifier = Modifier.width(8.dp))
             Text(
                 text = "$count",
-                style = MaterialTheme.typography.labelMedium,
-                color = color.copy(alpha = 0.7f)
+                style = MaterialTheme.typography.labelSmall,
+                fontWeight = FontWeight.Bold,
+                color = color,
             )
             Spacer(modifier = Modifier.width(2.dp))
             Icon(
@@ -1489,9 +1518,9 @@ private fun CollapsibleSectionHeader(
                 tint = color,
                 modifier = Modifier
                     .size(20.dp)
-                    .graphicsLayer { rotationZ = rotationAngle }
+                    .graphicsLayer { rotationZ = rotationAngle },
             )
-            Spacer(modifier = Modifier.width(8.dp))
+            Spacer(modifier = Modifier.width(6.dp))
         }
     }
 }
@@ -1582,12 +1611,24 @@ private fun AppGridItem(
 
         Spacer(modifier = Modifier.height(6.dp))
 
+        val protectionDesc = buildString {
+            if (app.isLocked) append(stringResource(R.string.action_lock)).append(' ')
+            if (app.isHidden) append(stringResource(R.string.action_hide)).append(' ')
+            if (app.isSandboxed) append(stringResource(R.string.action_isolate))
+        }.trim()
         Text(
             text = app.label,
             style = MaterialTheme.typography.bodySmall,
-            maxLines = 1,
+            maxLines = 2,
             overflow = TextOverflow.Ellipsis,
-            color = MaterialTheme.colorScheme.onSurface
+            color = MaterialTheme.colorScheme.onSurface,
+            modifier = Modifier.semantics {
+                contentDescription = if (protectionDesc.isNotEmpty()) {
+                    "${app.label}, $protectionDesc"
+                } else {
+                    app.label
+                }
+            },
         )
     }
 }
@@ -1601,49 +1642,68 @@ private fun AppQuickActionsSheet(
     onLauncherHideToggle: (AppInfo) -> Unit,
     onSandboxToggle: (AppInfo) -> Unit,
     onLaunch: (AppInfo) -> Unit,
+    onOpenDetails: (AppInfo) -> Unit,
     onDismiss: () -> Unit
 ) {
     val context = LocalContext.current
     val sandboxManager = remember {
         context.getSystemService(AxSandboxManager::class.java)
     }
+    // Dem day theo thanh dieu huong de noi dung cuon xuyen qua nen trong suot
+    val navBarsBottom = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
 
     LazyColumn(
         modifier = Modifier.fillMaxWidth(),
-        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 16.dp),
+        contentPadding = PaddingValues(
+            start = 16.dp,
+            end = 16.dp,
+            top = 16.dp,
+            bottom = 16.dp + navBarsBottom,
+        ),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         item {
-            PreferenceGroup {
-                item {
-                    BasePreference(
-                        title = app.label,
-                        summary = app.packageName,
-                        customIcon = {
-                            Image(
-                                painter = app.iconPainter,
-                                contentDescription = app.label,
-                                modifier = Modifier.size(40.dp)
-                            )
-                        },
-                        widget = {
-                            FilledTonalIconButton(onClick = { onLaunch(app) }) {
-                                Icon(
-                                    imageVector = Icons.Default.OpenInNew,
-                                    contentDescription = stringResource(R.string.action_launch)
-                                )
-                            }
-                        }
+            LocalExpressivePreferenceRow(
+                title = app.label,
+                summary = app.packageName,
+                position = LocalPrefPosition.Single,
+                leading = {
+                    Image(
+                        painter = app.iconPainter,
+                        contentDescription = app.label,
+                        modifier = Modifier.size(40.dp),
+                    )
+                },
+                trailing = {
+                    FilledTonalIconButton(onClick = { onLaunch(app) }) {
+                        Icon(
+                            imageVector = Icons.Default.OpenInNew,
+                            contentDescription = stringResource(R.string.action_launch),
+                        )
+                    }
+                },
+            )
+        }
+
+        item {
+            LocalPreferenceGroup {
+                row { pos ->
+                    LocalClickablePreference(
+                        title = stringResource(R.string.action_app_details),
+                        icon = Icons.Filled.Settings,
+                        position = pos,
+                        onClick = { onOpenDetails(app) },
                     )
                 }
             }
         }
 
         item {
-            PreferenceGroup {
-                item {
-                    SwitchPreference(
+            LocalPreferenceGroup {
+                row { pos ->
+                    LocalSwitchPreference(
                         title = stringResource(R.string.action_lock),
+                        position = pos,
                         checked = app.isLocked,
                         onCheckedChange = { onLockToggle(app) },
                         icon = if (app.isLocked) Icons.Filled.Lock else Icons.Outlined.Lock,
@@ -1656,25 +1716,25 @@ private fun AppQuickActionsSheet(
             HideSettingsDropdown(
                 app = app,
                 onHideToggle = onHideToggle,
-                onLauncherHideToggle = onLauncherHideToggle
+                onLauncherHideToggle = onLauncherHideToggle,
             )
         }
 
-            item {
-                SandboxOptionsDropdown(
-                    app = app,
-                    sandboxManager = sandboxManager,
-                    onSandboxToggle = onSandboxToggle
-                )
-            }
-
-            item {
-                SpoofSettingsDropdown(
-                    app = app,
-                    sandboxManager = sandboxManager
-                )
-            }
+        item {
+            SandboxOptionsDropdown(
+                app = app,
+                sandboxManager = sandboxManager,
+                onSandboxToggle = onSandboxToggle,
+            )
         }
+
+        item {
+            SpoofSettingsDropdown(
+                app = app,
+                sandboxManager = sandboxManager,
+            )
+        }
+    }
 }
 
 data class HiddenNotification(
@@ -1692,11 +1752,21 @@ data class HiddenNotification(
 @Composable
 fun NotificationsTab(
     isUnlocked: Boolean = false,
-    onUnlockRequest: () -> Unit = {}
+    onUnlockRequest: () -> Unit = {},
+    contentPadding: PaddingValues = PaddingValues(0.dp),
+    listOverscrollEffect: androidx.compose.foundation.OverscrollEffect? = null,
+    listState: androidx.compose.foundation.lazy.LazyListState =
+        androidx.compose.foundation.lazy.rememberLazyListState(),
+    useAlwaysStretch: Boolean = false,
 ) {
+    val stretchMod = if (listOverscrollEffect != null && (useAlwaysStretch || !isUnlocked)) {
+        Modifier.fillMaxSize().miuixAlwaysVerticalStretch(listOverscrollEffect)
+    } else {
+        Modifier.fillMaxSize()
+    }
     if (!isUnlocked) {
         Box(
-            modifier = Modifier.fillMaxSize(),
+            modifier = stretchMod,
             contentAlignment = Alignment.Center
         ) {
             Column(
@@ -1828,8 +1898,13 @@ fun NotificationsTab(
     }
 
     if (notifications.isEmpty()) {
+        val emptyStretch = if (listOverscrollEffect != null) {
+            Modifier.fillMaxSize().miuixAlwaysVerticalStretch(listOverscrollEffect)
+        } else {
+            Modifier.fillMaxSize()
+        }
         Box(
-            modifier = Modifier.fillMaxSize(),
+            modifier = emptyStretch,
             contentAlignment = Alignment.Center
         ) {
             Column(
@@ -1871,9 +1946,16 @@ fun NotificationsTab(
         }
     } else {
         LazyColumn(
+            state = listState,
             modifier = Modifier.fillMaxSize(),
-            contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 100.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
+            contentPadding = PaddingValues(
+                start = 16.dp,
+                end = 16.dp,
+                top = 16.dp,
+                bottom = 4.dp + contentPadding.calculateBottomPadding(),
+            ),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+            overscrollEffect = listOverscrollEffect,
         ) {
             items(notifications, key = { it.key }) { notification ->
                 NotificationItem(
@@ -2064,6 +2146,12 @@ private fun launchApp(context: Context, packageName: String, userId: Int = 0) {
     } catch (e: Exception) {
         Log.e(TAG, "Error launching $packageName", e)
     }
+}
+
+/** Cache danh sach ung dung in-memory de chong load lai / flicker khi chuyen doi man hinh. */
+internal object SandboxAppListCache {
+    @Volatile
+    var cachedApps: List<AppInfo>? = null
 }
 
 private object AppIconCache {

@@ -29,12 +29,22 @@
     <string name="action_notifications">Notifications</string>
     <string name="action_back">Back</string>
     <string name="action_launch">Launch</string>
+    <string name="action_app_details">App details</string>
+    <string name="notifications_badge_count">%d notifications</string>
+    <string name="vault_filter_all">All</string>
+    <string name="vault_filter_images">Images</string>
+    <string name="vault_filter_videos">Videos</string>
+    <string name="vault_filter_files">Files</string>
+    <string name="vault_item_selected">Selected</string>
+    <string name="vault_item_not_selected">Not selected</string>
 
     <!-- App sections -->
     <string name="section_private_apps">Private Apps</string>
     <string name="section_isolated_apps">Isolated Apps</string>
     <string name="section_all_apps">All Apps</string>
     <string name="show_system_apps">Show System Apps</string>
+    <string name="filter_system_apps">System</string>
+    <string name="private_apps_count_format">%1$d apps</string>
 
     <!-- Setup private apps card -->
     <string name="setup_private_apps_title">Set Up Private Apps</string>
@@ -53,6 +63,9 @@
     <string name="hide_from_launcher_description_off">Hide this app icon from the home screen and app drawer</string>
     <string name="hide_from_launcher_description_on">Hidden from home screen app drawer (launches and notifications remain open)</string>
     <string name="hide_settings_title">App Hiding Options</string>
+    <string name="detail_section_lock_hide">Lock and hide</string>
+    <string name="detail_section_isolation">Isolation</string>
+    <string name="detail_section_spoofing">Spoofing</string>
     <string name="isolate_app_title">Isolate App</string>
     <string name="isolate_app_description">Isolate from other apps, restrict permissions and settings</string>
 
@@ -100,6 +113,19 @@
     <string name="action_import_vault">Import to Vault</string>
     <string name="action_export">Export</string>
     <string name="action_delete">Delete</string>
+    <string name="action_restore">Restore</string>
+    <string name="vault_section_images">Images</string>
+    <string name="vault_section_videos">Videos</string>
+    <string name="vault_section_files">Files</string>
+    <string name="vault_selected_count">%d selected</string>
+    <string name="vault_importing">Importing\u2026</string>
+    <string name="vault_restoring">Restoring\u2026</string>
+    <string name="vault_deleting">Deleting\u2026</string>
+    <string name="vault_restore_confirm">Restore %d files?</string>
+    <string name="vault_delete_multi_confirm">Permanently delete %d files?</string>
+    <string name="vault_restored_to">Restored to: %1$s</string>
+    <string name="vault_restored_count">%d files successfully restored!</string>
+    <string name="vault_open_with">Open with</string>
     <string name="vault_import_success">%d files added to vault</string>
     <string name="vault_import_error">Failed to import some files</string>
     <string name="export_success">File restored from vault</string>

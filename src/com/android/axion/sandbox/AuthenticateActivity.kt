@@ -164,6 +164,8 @@ class AuthenticateActivity : ComponentActivity() {
         )
     }
 
+    // AUTH_BLUR: giu solid/dim overlay — khong Window blurBehind (Surface opaque +
+    // khong lifecycle translucency). Criterion cho phep fallback solid.
     private fun setupWindowForOverlay() {
         window?.apply {
             setType(WindowManager.LayoutParams.TYPE_STATUS_BAR_SUB_PANEL)
@@ -181,6 +183,7 @@ class AuthenticateActivity : ComponentActivity() {
             }
         }
     }
+
 
     private fun unlockAndFinish() {
         if (authState == AuthState.FINISHED || isFinishing) return

@@ -19,22 +19,32 @@
     <!-- Main screen -->
     <string name="sandbox_title">Hộp cách ly</string>
     <string name="search_hint">Search apps\u2026</string>
-    <string name="tab_apps">Các ứng dụng</string>
+    <string name="tab_apps">Ứng dụng</string>
     <string name="tab_notifications">Thông báo</string>
-    <string name="tab_vault">Vault</string>
+    <string name="tab_vault">Kho</string>
     <string name="no_apps_found">Không tìm thấy ứng dụng nào</string>
     <string name="action_search">Tìm kiếm</string>
     <string name="action_settings">Cài đặt</string>
     <string name="action_notifications">Thông báo</string>
     <string name="action_back">Back</string>
+    <string name="action_app_details">Chi tiết ứng dụng</string>
+    <string name="notifications_badge_count">%d thông báo</string>
+    <string name="vault_filter_all">Tất cả</string>
+    <string name="vault_filter_images">Ảnh</string>
+    <string name="vault_filter_videos">Video</string>
+    <string name="vault_filter_files">Tệp</string>
+    <string name="vault_item_selected">Đã chọn</string>
+    <string name="vault_item_not_selected">Chưa chọn</string>
     <string name="action_launch">Khởi chạy</string>
     <!-- App sections -->
     <string name="section_private_apps">Ứng dụng riêng tư</string>
     <string name="section_isolated_apps">Isolated Apps</string>
     <string name="section_all_apps">Tất cả ứng dụng</string>
     <string name="show_system_apps">Hiển thị ứng dụng hệ thống</string>
+    <string name="filter_system_apps">Hệ thống</string>
+    <string name="private_apps_count_format">%1$d ứng dụng</string>
     <!-- Setup private apps card -->
-    <string name="setup_private_apps_title">Đặt những ứng dụng riêng tư</string>
+    <string name="setup_private_apps_title">Ứng dụng riêng tư</string>
     <string name="setup_private_apps_description">Tạo một mã PIN, mật khẩu, hoặc hình mở khoá để khoá và ẩn các ứng dụng</string>
     <!-- App detail / quick actions -->
     <string name="action_lock">Khoá</string>
@@ -49,6 +59,9 @@
     <string name="hide_from_launcher_description_off">Hide this app icon from the home screen and app drawer</string>
     <string name="hide_from_launcher_description_on">Hidden from home screen app drawer (launches and notifications remain open)</string>
     <string name="hide_settings_title">App Hiding Options</string>
+    <string name="detail_section_lock_hide">Khóa và ẩn</string>
+    <string name="detail_section_isolation">Cách ly</string>
+    <string name="detail_section_spoofing">Giả lập thông tin</string>
     <string name="isolate_app_title">Isolate App</string>
     <string name="isolate_app_description">Isolate from other apps, restrict permissions and settings</string>
     <!-- Sandbox sub-settings -->
@@ -85,19 +98,32 @@
     <string name="action_dismiss">Loại bỏ</string>
     <string name="action_open">Mở</string>
     <!-- Vault tab -->
-    <string name="vault_locked_title">Vault Locked</string>
-    <string name="vault_locked_description">Unlock the private area to access your secure vault</string>
-    <string name="vault_empty_title">Vault is empty</string>
-    <string name="vault_empty_description">Files you import will be moved here and hidden from other apps</string>
-    <string name="action_import_vault">Import to Vault</string>
-    <string name="action_export">Export</string>
-    <string name="action_delete">Xóa</string>
-    <string name="vault_import_success">%d files added to vault</string>
-    <string name="vault_import_error">Failed to import some files</string>
-    <string name="export_success">File restored from vault</string>
-    <string name="export_error">Failed to export file</string>
-    <string name="delete_confirm_title">Delete File?</string>
-    <string name="delete_confirm_message">This will permanently delete the file from your device.</string>
+    <string name="vault_locked_title">Kho đã khóa</string>
+    <string name="vault_locked_description">Mở khóa khu vực riêng tư để truy cập kho bảo mật</string>
+    <string name="vault_empty_title">Kho trống</string>
+    <string name="vault_empty_description">Tệp bạn nhập sẽ được chuyển vào đây và ẩn với ứng dụng khác</string>
+    <string name="action_import_vault">Nhập vào kho</string>
+    <string name="action_export">Xuất</string>
+    <string name="action_delete">Xóa</string>
+    <string name="action_restore">Khôi phục</string>
+    <string name="vault_section_images">Ảnh</string>
+    <string name="vault_section_videos">Video</string>
+    <string name="vault_section_files">Tệp</string>
+    <string name="vault_selected_count">Đã chọn %d</string>
+    <string name="vault_importing">Đang nhập…</string>
+    <string name="vault_restoring">Đang khôi phục…</string>
+    <string name="vault_deleting">Đang xóa…</string>
+    <string name="vault_restore_confirm">Khôi phục %d tệp?</string>
+    <string name="vault_delete_multi_confirm">Xóa vĩnh viễn %d tệp?</string>
+    <string name="vault_restored_to">Đã khôi phục tới: %1$s</string>
+    <string name="vault_restored_count">Đã khôi phục thành công %d tệp!</string>
+    <string name="vault_open_with">Mở bằng</string>
+    <string name="vault_import_success">Đã thêm %d tệp vào kho</string>
+    <string name="vault_import_error">Không thể nhập một số tệp</string>
+    <string name="export_success">Đã khôi phục tệp từ kho</string>
+    <string name="export_error">Không thể xuất tệp</string>
+    <string name="delete_confirm_title">Xóa tệp?</string>
+    <string name="delete_confirm_message">Thao tác này sẽ xóa vĩnh viễn tệp khỏi thiết bị.</string>
     <!-- Lock screen (PIN) -->
     <string name="pin_title_create">Tạo mã PIN</string>
     <string name="pin_title_confirm">Xác nhận mã PIN</string>

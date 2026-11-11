@@ -17,10 +17,13 @@ package com.android.axion.sandbox.ui
 
 import android.content.Intent
 import android.net.Uri
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.AutoMode
@@ -40,12 +43,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
-import com.android.axion.compose.preferences.BasePreference
-import com.android.axion.compose.preferences.ClickablePreference
-import com.android.axion.compose.preferences.ListPreference
-import com.android.axion.compose.preferences.PreferenceGroup
-import com.android.axion.compose.preferences.SwitchPreference
-import com.android.axion.compose.scaffold.AxionScaffold
 import com.android.axion.sandbox.R
 import com.android.axion.sandbox.security.LockedAppBehavior
 import com.android.axion.sandbox.security.PrivateSectionBehavior
@@ -84,18 +81,23 @@ fun SettingsScreen(
         "300" to stringResource(R.string.timeout_300s)
     )
 
-    AxionScaffold(
+    SandboxSubmenuScaffold(
         title = stringResource(R.string.settings_title),
-        onBackClick = onBackClick
-    ) { paddingValues ->
+        onBackClick = onBackClick,
+    ) {
         LazyColumn(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(paddingValues)
-                .padding(horizontal = 16.dp)
+            state = listState,
+            overscrollEffect = listOverscrollEffect,
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(
+                start = 16.dp,
+                end = 16.dp,
+                top = 0.dp,
+                bottom = 16.dp + WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding(),
+            ),
         ) {
+            item { Spacer(modifier = Modifier.height(8.dp)) }
             item {
-                Spacer(modifier = Modifier.height(8.dp))
                 SecuritySection(
                     currentSecurityType = currentSecurityType,
                     onChangeSecurityType = onChangeSecurityType
@@ -169,21 +171,23 @@ private fun BackupRestoreSection(
     onBackup: () -> Unit,
     onRestore: () -> Unit
 ) {
-    PreferenceGroup(title = stringResource(R.string.settings_backup_title)) {
-        item {
-            ClickablePreference(
+    LocalPreferenceGroup(title = stringResource(R.string.settings_backup_title)) {
+        row { pos ->
+            LocalClickablePreference(
                 title = stringResource(R.string.settings_backup_applist),
                 summary = stringResource(R.string.settings_backup_applist_summary),
                 icon = Icons.Outlined.Backup,
-                onClick = onBackup
+                position = pos,
+                onClick = onBackup,
             )
         }
-        item {
-            ClickablePreference(
+        row { pos ->
+            LocalClickablePreference(
                 title = stringResource(R.string.settings_restore_applist),
                 summary = stringResource(R.string.settings_restore_applist_summary),
                 icon = Icons.Outlined.SettingsBackupRestore,
-                onClick = onRestore
+                position = pos,
+                onClick = onRestore,
             )
         }
     }
@@ -208,36 +212,40 @@ private fun SecuritySection(
         SecurityType.NONE -> Icons.Outlined.Lock
     }
 
-    PreferenceGroup(title = stringResource(R.string.settings_security_title)) {
-        item {
-            BasePreference(
+    LocalPreferenceGroup(title = stringResource(R.string.settings_security_title)) {
+        row { pos ->
+            LocalBasePreference(
                 title = stringResource(R.string.settings_current_lock_type),
                 summary = lockTypeSummary,
                 icon = lockTypeIcon,
+                position = pos,
             )
         }
-        item {
-            ClickablePreference(
+        row { pos ->
+            LocalClickablePreference(
                 title = stringResource(R.string.settings_use_pin),
                 summary = stringResource(R.string.settings_use_pin_summary),
                 icon = Icons.Outlined.Pin,
-                onClick = { onChangeSecurityType(SecurityType.PIN) }
+                position = pos,
+                onClick = { onChangeSecurityType(SecurityType.PIN) },
             )
         }
-        item {
-            ClickablePreference(
+        row { pos ->
+            LocalClickablePreference(
                 title = stringResource(R.string.settings_use_password),
                 summary = stringResource(R.string.settings_use_password_summary),
                 icon = Icons.Outlined.Password,
-                onClick = { onChangeSecurityType(SecurityType.PASSWORD) }
+                position = pos,
+                onClick = { onChangeSecurityType(SecurityType.PASSWORD) },
             )
         }
-        item {
-            ClickablePreference(
+        row { pos ->
+            LocalClickablePreference(
                 title = stringResource(R.string.settings_use_pattern),
                 summary = stringResource(R.string.settings_use_pattern_summary),
                 icon = Icons.Outlined.Pattern,
-                onClick = { onChangeSecurityType(SecurityType.PATTERN) }
+                position = pos,
+                onClick = { onChangeSecurityType(SecurityType.PATTERN) },
             )
         }
     }
@@ -250,24 +258,26 @@ private fun BiometricsSection(
     onChangeBiometricEnabled: (Boolean) -> Unit,
     onChangePreferBiometric: (Boolean) -> Unit
 ) {
-    PreferenceGroup(title = stringResource(R.string.settings_biometrics_title)) {
-        item {
-            SwitchPreference(
+    LocalPreferenceGroup(title = stringResource(R.string.settings_biometrics_title)) {
+        row { pos ->
+            LocalSwitchPreference(
                 title = stringResource(R.string.settings_biometric_unlock),
                 summary = stringResource(R.string.settings_biometric_unlock_summary),
                 checked = isBiometricEnabled,
                 onCheckedChange = onChangeBiometricEnabled,
-                icon = Icons.Outlined.Fingerprint
+                icon = Icons.Outlined.Fingerprint,
+                position = pos,
             )
         }
         if (isBiometricEnabled) {
-            item {
-                SwitchPreference(
+            row { pos ->
+                LocalSwitchPreference(
                     title = stringResource(R.string.settings_auto_biometric),
                     summary = stringResource(R.string.settings_auto_biometric_summary),
                     checked = isPreferBiometric,
                     onCheckedChange = onChangePreferBiometric,
-                    icon = Icons.Outlined.AutoMode
+                    icon = Icons.Outlined.AutoMode,
+                    position = pos,
                 )
             }
         }
@@ -280,21 +290,23 @@ private fun RecoverySection(
     onSetupRecovery: () -> Unit,
     onForgotPassword: () -> Unit
 ) {
-    PreferenceGroup(title = stringResource(R.string.settings_recovery_title)) {
-        item {
+    LocalPreferenceGroup(title = stringResource(R.string.settings_recovery_title)) {
+        row { pos ->
             if (hasSecurityQuestion) {
-                ClickablePreference(
+                LocalClickablePreference(
                     title = stringResource(R.string.settings_forgot_password),
                     summary = stringResource(R.string.settings_forgot_password_summary),
                     icon = Icons.Outlined.LockReset,
-                    onClick = onForgotPassword
+                    position = pos,
+                    onClick = onForgotPassword,
                 )
             } else {
-                ClickablePreference(
+                LocalClickablePreference(
                     title = stringResource(R.string.settings_setup_question),
                     summary = stringResource(R.string.settings_setup_question_summary),
                     icon = Icons.Outlined.Help,
-                    onClick = onSetupRecovery
+                    position = pos,
+                    onClick = onSetupRecovery,
                 )
             }
         }
@@ -316,26 +328,27 @@ private fun LockedAppBehaviorSection(
         LockedAppBehavior.ON_KILL.name to stringResource(R.string.settings_behavior_on_kill)
     )
 
-    PreferenceGroup(title = stringResource(R.string.settings_locked_behavior_title)) {
-        item {
-            ListPreference(
+    LocalPreferenceGroup(title = stringResource(R.string.settings_locked_behavior_title)) {
+        row { pos ->
+            LocalListPreference(
                 title = stringResource(R.string.settings_locked_behavior_summary),
                 options = behaviorOptions,
                 value = currentBehavior.name,
                 onValueChange = { value ->
-                    val behavior = LockedAppBehavior.valueOf(value)
-                    onChangeBehavior(behavior)
-                }
+                    onChangeBehavior(LockedAppBehavior.valueOf(value))
+                },
+                position = pos,
             )
         }
         if (currentBehavior == LockedAppBehavior.TIMEOUT) {
-            item {
-                ListPreference(
+            row { pos ->
+                LocalListPreference(
                     title = stringResource(R.string.settings_timeout_title),
                     summary = stringResource(R.string.settings_behavior_timeout_summary, currentTimeout),
                     options = timeoutOptions,
                     value = currentTimeout.toString(),
-                    onValueChange = { value -> onChangeTimeout(value.toInt()) }
+                    onValueChange = { value -> onChangeTimeout(value.toInt()) },
+                    position = pos,
                 )
             }
         }
@@ -355,26 +368,27 @@ private fun PrivateSectionBehaviorSection(
         PrivateSectionBehavior.TIMEOUT.name to stringResource(R.string.settings_private_timeout)
     )
 
-    PreferenceGroup(title = stringResource(R.string.settings_private_behavior_title)) {
-        item {
-            ListPreference(
+    LocalPreferenceGroup(title = stringResource(R.string.settings_private_behavior_title)) {
+        row { pos ->
+            LocalListPreference(
                 title = stringResource(R.string.settings_private_behavior_summary),
                 options = behaviorOptions,
                 value = currentBehavior.name,
                 onValueChange = { value ->
-                    val behavior = PrivateSectionBehavior.valueOf(value)
-                    onChangeBehavior(behavior)
-                }
+                    onChangeBehavior(PrivateSectionBehavior.valueOf(value))
+                },
+                position = pos,
             )
         }
         if (currentBehavior == PrivateSectionBehavior.TIMEOUT) {
-            item {
-                ListPreference(
+            row { pos ->
+                LocalListPreference(
                     title = stringResource(R.string.settings_timeout_title),
                     summary = stringResource(R.string.settings_private_timeout_summary, currentTimeout),
                     options = timeoutOptions,
                     value = currentTimeout.toString(),
-                    onValueChange = { value -> onChangeTimeout(value.toInt()) }
+                    onValueChange = { value -> onChangeTimeout(value.toInt()) },
+                    position = pos,
                 )
             }
         }
@@ -384,17 +398,20 @@ private fun PrivateSectionBehaviorSection(
 @Composable
 private fun AboutSection() {
     val context = LocalContext.current
-    PreferenceGroup(title = stringResource(R.string.settings_about_title)) {
-        item {
-            ClickablePreference(
+    LocalPreferenceGroup(title = stringResource(R.string.settings_about_title)) {
+        row { pos ->
+            LocalClickablePreference(
                 title = stringResource(R.string.settings_version),
                 summary = stringResource(R.string.settings_version_value),
                 icon = Icons.Outlined.Info,
-                showExternalIcon = true,
+                position = pos,
                 onClick = {
-                    val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/Evolution-X/packages_apps_Sandbox"))
+                    val intent = Intent(
+                        Intent.ACTION_VIEW,
+                        Uri.parse("https://github.com/Evolution-X/packages_apps_Sandbox"),
+                    )
                     context.startActivity(intent)
-                }
+                },
             )
         }
     }
